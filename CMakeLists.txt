@@ -193,11 +193,11 @@ endif()
 # Testing
 #-----------------------------------------------------------------------------
 option(BUILD_TESTING "Build testing." OFF)
-if(NOT MERCURY_EXTERNALLY_CONFIGURED AND BUILD_TESTING)
+#if(NOT MERCURY_EXTERNALLY_CONFIGURED AND BUILD_TESTING)
   enable_testing()
   include(CTest)
   add_subdirectory(Testing)
-endif()
+#endif()
 
 #-----------------------------------------------------------------------------
 # Configure the config.cmake file for the build directory
