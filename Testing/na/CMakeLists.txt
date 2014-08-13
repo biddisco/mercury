@@ -31,7 +31,7 @@ function(add_na_test test_name server client)
       add_test(NAME "na_${static_test_name}"
         COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 1
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:na_test_${server}> ${MPIEXEC_POSTFLAGS}
-        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPIEXEC_MAX_NUMPROCS}
+        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS}
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:na_test_${client}> ${static_test_args}
       )
   endif()

@@ -477,7 +477,7 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
     if (addr_table) *addr_table = na_addr_table;
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
-    if (max_number_of_peers) *max_number_of_peers = MPIEXEC_MAX_NUMPROCS;
+    if (max_number_of_peers) *max_number_of_peers = MPI_NUM_CLIENTS;
 #else
     if (max_number_of_peers) *max_number_of_peers = 1;
 #endif

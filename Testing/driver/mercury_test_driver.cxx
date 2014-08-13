@@ -71,10 +71,10 @@ void ShipperTestDriver::CollectConfiguredOptions()
 #else
   return;
 #endif
-  int maxNumProc = 1;
+  int numClients = 1;
 
-# ifdef MPIEXEC_MAX_NUMPROCS
-  maxNumProc = MPIEXEC_MAX_NUMPROCS;
+# ifdef MPI_NUM_CLIENTS
+  numClients = MPI_NUM_CLIENTS;
 # endif
 # ifdef MPIEXEC_NUMPROC_FLAG
   this->MPINumProcessFlag = MPIEXEC_NUMPROC_FLAG;
@@ -86,7 +86,7 @@ void ShipperTestDriver::CollectConfiguredOptions()
   this->SeparateArguments(MPIEXEC_POSTFLAGS, this->MPIPostFlags);
 # endif
   char buf[32];
-  sprintf(buf, "%d", maxNumProc);
+  sprintf(buf, "%d", numClients);
   this->MPIServerNumProcessFlag = "1";
   this->MPIClientNumProcessFlag = buf;
 }

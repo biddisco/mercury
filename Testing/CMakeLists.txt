@@ -31,6 +31,10 @@ option(MERCURY_ENABLE_PARALLEL_TESTING
   "Enable testing in parallel (requires MPI)." OFF)
 if(MERCURY_ENABLE_PARALLEL_TESTING OR NA_USE_MPI)
   set(MERCURY_HAS_PARALLEL_TESTING 1)
+
+  # use N-1 clients (and 1 server) 
+  math(EXPR MPI_NUM_CLIENTS "${MPIEXEC_MAX_NUMPROCS}-1")
+
   if(NA_USE_MPI AND NOT MERCURY_ENABLE_PARALLEL_TESTING)
     # Always force parallel testing if NA_USE_MPI is turned ON
     set(MERCURY_ENABLE_PARALLEL_TESTING "ON" CACHE BOOL
@@ -122,7 +126,7 @@ macro(add_mercury_test_comm test_name comm opt)
       add_test(NAME "mercury_${static_test_name}"
         COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 1
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_server> ${MPIEXEC_POSTFLAGS}
-        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPIEXEC_MAX_NUMPROCS}
+        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS}
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_${test_name}> ${static_test_args}
       )
   endif()
