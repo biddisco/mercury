@@ -13,16 +13,39 @@ function(build_na_test test_name)
 endfunction()
 
 function(add_na_test test_name server client)
+  if(MPI_NUM_CLIENTS)
+    math(EXPR LOOP_CLIENTS "${MPI_NUM_CLIENTS}-1")
+  else()
+    set(LOOP_CLIENTS 1)
+  endif()
   foreach(comm ${NA_PLUGINS})
     set(test_args --comm ${comm})
     set(full_test_name ${test_name}_${comm})
 
+    #
     # Dynamic client/server test
-    add_test(NAME "na_${full_test_name}"
-      COMMAND $<TARGET_FILE:mercury_test_driver>
-      --server $<TARGET_FILE:na_test_${server}>
-      --client $<TARGET_FILE:na_test_${client}> ${test_args}
-    )
+    #
+    if(${comm} STREQUAL "verbs")
+      # build a command string using one exec for each client
+      set(CLIENT_STRING "")
+      foreach(i RANGE ${LOOP_CLIENTS})
+        set(CLIENT_STRING ${CLIENT_STRING} 
+          : -n 1 $<TARGET_FILE:na_test_${client}> ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}
+        )
+      endforeach(i)
+
+      add_test(NAME "na_${full_test_name}"
+        COMMAND ${MPIEXEC} 
+          -n 1 $<TARGET_FILE:na_test_${server}> ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}
+          ${CLIENT_STRING}
+      )
+    else()
+      add_test(NAME "na_${full_test_name}"
+        COMMAND $<TARGET_FILE:mercury_test_driver>
+        --server $<TARGET_FILE:na_test_${server}>
+        --client $<TARGET_FILE:na_test_${client}> ${test_args}
+      )
+    endif()
 
     # Static client/server test
     if(${comm} STREQUAL "mpi")

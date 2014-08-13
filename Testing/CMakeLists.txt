@@ -98,7 +98,7 @@ function(build_mercury_test test_name)
   endif()
 endfunction()
 
-macro(add_mercury_test_comm test_name comm opt)
+macro(add_mercury_test_comm test_name comm opt params)
   # Set full test name
   set(full_test_name ${test_name})
   set(opt_names ${comm} ${opt})
@@ -112,14 +112,40 @@ macro(add_mercury_test_comm test_name comm opt)
     set(test_args ${test_args} --${opt})
   endif()
 
-  # Dynamic client/server test
-  add_test(NAME "mercury_${full_test_name}"
-    COMMAND $<TARGET_FILE:mercury_test_driver>
-    --server $<TARGET_FILE:hg_test_server>
-    --client $<TARGET_FILE:hg_test_${test_name}> ${test_args}
-  )
+  set(param_list ${opt})
+  set(flag 1)
+  foreach(param ${params})
+    message("param is ${param}")
+    if(flag)
+      set(test_args ${test_args} --${param})
+      set(flag 0)
+    else()
+      set(test_args ${test_args} ${param})
+      set(flag 1)
+    endif()
+  endforeach()
 
+  #
+  # Dynamic client/server test
+  #
+  if(${comm} STREQUAL "verbs")
+    # Dynamic client/server test
+    add_test(NAME "mercury_${full_test_name}"
+      COMMAND ${MPIEXEC} 
+        -n 1 $<TARGET_FILE:hg_test_server> ${test_args} :
+        -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:hg_test_${test_name}> ${test_args}
+    )
+  else()
+    add_test(NAME "mercury_${full_test_name}"
+      COMMAND $<TARGET_FILE:mercury_test_driver>
+      --server $<TARGET_FILE:hg_test_server>
+      --client $<TARGET_FILE:hg_test_${test_name}> ${test_args}
+    )
+  endif()
+  
+  #
   # Static client/server test
+  #
   if(${comm} STREQUAL "mpi")
     set(static_test_name ${full_test_name}_static)
     set(static_test_args ${test_args} --static)
@@ -149,15 +175,13 @@ macro(add_mercury_test_comm test_name comm opt)
   endif()
 endmacro()
 
-function(add_mercury_test test_name)
+function(add_mercury_test test_name opt)
   foreach(comm ${NA_PLUGINS})
-    add_mercury_test_comm(${test_name} ${comm} "")
-  endforeach()
-endfunction()
-
-function(add_mercury_opt_test test_name opt)
-  foreach(comm ${NA_PLUGINS})
-    add_mercury_test_comm(${test_name} ${comm} ${opt})
+    if (${comm} STREQUAL "verbs")
+      add_mercury_test_comm(${test_name} verbs "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
+    else()
+      add_mercury_test_comm(${test_name} ${comm} "${opt}" "")
+    endif()
   endforeach()
 endfunction()
 
@@ -202,11 +226,11 @@ endif()
 # Build tests and add them to ctest
 foreach(MERCURY_test ${MERCURY_tests})
   build_mercury_test(${MERCURY_test})
-  add_mercury_test(${MERCURY_test})
+  add_mercury_test(${MERCURY_test} "")
 endforeach()
 
-add_mercury_opt_test(bulk_seg "extra")
-add_mercury_opt_test(bulk_seg "variable")
+add_mercury_test(bulk_seg "extra")
+add_mercury_test(bulk_seg "variable")
 
 # Additional test
 build_mercury_test(bulk_mirror)
