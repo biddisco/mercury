@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.5 FATAL_ERROR)
-project(NA C)
+project(NA C CXX)
 
 #------------------------------------------------------------------------------
 # Setup install directories and cmake module
@@ -72,6 +72,43 @@ if(NA_USE_BMI)
      " HAVE_BMI_ZOID_TIMEOUT)
   else()
     message(FATAL_ERROR "Could not find BMI.")
+  endif()
+endif()
+
+option(NA_USE_VERBS "Use VERBS." OFF)
+if(NA_USE_VERBS)
+  include_directories(
+    ${BGC_INCLUDE_DIR}
+  )
+  find_package(OFED) 
+  option(NA_VERBS_USE_LOG4CXX "Use Log4Cxx library for debug messages." OFF)
+  if(NA_VERBS_USE_LOG4CXX)
+    add_definitions(-DNA_VERBS_USE_LOG4CXX)  
+  endif()
+  
+  if(OFED_FOUND)
+    set(NA_PLUGINS ${NA_PLUGINS} verbs)
+    set(NA_HAS_VERBS 1)
+    set(NA_EXT_LIB_DEPENDENCIES
+      ${NA_EXT_LIB_DEPENDENCIES}
+      ${_ibverbs_LIBRARY}
+      ${_rdma_LIBRARY}
+    )
+    set(NA_EXT_INCLUDE_DEPENDENCIES
+      ${NA_EXT_INCLUDE_DEPENDENCIES}
+      ${BGC_INCLUDE_DIR}
+    )
+
+    set(VERBS_DEVICE_NAME "roq" CACHE STRING "Infiniband device name to use")
+    set(VERBS_INTERFACE_NAME "roq0" CACHE STRING "Infiniband interface name to use")
+    set(VERBS_PORT_NUMBER "10000" CACHE STRING "Infiniband port number to use")  
+    
+    if (${VERBS_DEVICE_NAME} MATCHES "bgvrnic")
+      ADD_DEFINITIONS(-DBGQ_BGVRNIC)
+    endif()
+    
+  else()
+    message("Fatal : Could not find RDMA.")
   endif()
 endif()
 
@@ -189,6 +226,13 @@ if(NA_USE_MPI)
   )
 endif()
 
+if(NA_USE_VERBS)
+  set(NA_SRCS
+    ${NA_SRCS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/na_verbs.cc
+  )
+endif()
+
 #----------------------------------------------------------------------------
 # Libraries
 #----------------------------------------------------------------------------
@@ -200,6 +244,12 @@ if(MERCURY_ENABLE_COVERAGE)
   set_coverage_flags(na)
 endif()
 
+if(NA_USE_VERBS)
+  target_link_libraries(na
+    rdma_lib
+    ${Boost_REGEX_LIBRARY_DEBUG}
+  )
+endif()
 #---------------------------------------------------------------------------
 # Add Target(s) to CMake Install
 #---------------------------------------------------------------------------

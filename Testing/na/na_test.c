@@ -37,6 +37,10 @@
 /****************/
 #define HG_TEST_CONFIG_FILE_NAME "/port.cfg"
 
+#ifdef NA_HAS_VERBS
+extern na_return_t na_verbs_accept(void *args);
+#endif
+
 /*******************/
 /* Local Variables */
 /*******************/
