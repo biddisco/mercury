@@ -81,6 +81,8 @@ if(NA_USE_VERBS)
     ${BGC_INCLUDE_DIR}
   )
   find_package(OFED) 
+  find_package(Boost 1.48.0 REQUIRED regex)
+
   option(NA_VERBS_USE_LOG4CXX "Use Log4Cxx library for debug messages." OFF)
   if(NA_VERBS_USE_LOG4CXX)
     add_definitions(-DNA_VERBS_USE_LOG4CXX)  
@@ -93,6 +95,7 @@ if(NA_USE_VERBS)
       ${NA_EXT_LIB_DEPENDENCIES}
       ${_ibverbs_LIBRARY}
       ${_rdma_LIBRARY}
+      ${Boost_LIBRARIES}
     )
     set(NA_EXT_INCLUDE_DEPENDENCIES
       ${NA_EXT_INCLUDE_DEPENDENCIES}
