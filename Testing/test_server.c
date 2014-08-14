@@ -29,7 +29,7 @@ main(int argc, char *argv[])
 
     hg_ret = HG_Test_server_init(argc, argv, NULL, NULL,
             &number_of_peers);
-
+printf("Finished test server \n");
 //    for (i = 0; i < number_of_peers; i++) {
 //        /* Receive new function calls */
 //        hg_ret = HG_Handler_process(HG_MAX_IDLE_TIME, HG_STATUS_IGNORE);
@@ -43,7 +43,9 @@ main(int argc, char *argv[])
         hg_status_t status = HG_FALSE;
 
         /* Receive new function calls */
+printf("about to HG_Handler_process\n");
         hg_ret = HG_Handler_process(NA_MAX_IDLE_TIME, &status);
+printf("done HG_Handler_process\n");
         if (hg_ret == HG_SUCCESS && status) {
             /* printf("# Request processed\n"); */
         }
