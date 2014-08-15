@@ -27,6 +27,16 @@
 #ifndef STDIO_HWSTDIOCONTROLLER_H
 #define STDIO_HWSTDIOCONTROLLER_H
 
+#ifndef NA_VERBS_USE_LOG4CXX
+ #define DISABLE_LOGGING
+ #define LOG_CIOS_DEBUG_DISABLE
+ #define LOG_CIOS_TRACE_DISABLE
+ #define LOG_CIOS_INFO_DISABLE
+ #define LOG_CIOS_WARN_DISABLE
+#undef LOG_CIOS_DEBUG_MSG
+#define LOG_CIOS_DEBUG_MSG(x) std::cout << (x) << std::endl;
+#endif
+
 // Includes
 #include <ramdisk/include/services/common/PointerMap.h>
 #include <ramdisk/include/services/common/RdmaCompletionChannel.h>
@@ -37,8 +47,7 @@
 #include <deque>
 #include <chrono>
 #include <iostream>
-
-typedef int (*CompletionCallback)(uint64_t);
+#include <functional>
 
 namespace bgcios
 {
@@ -66,9 +75,12 @@ public:
    //! \return 0 when successful, errno when unsuccessful.
 
    int startup();
+
    bool isTerminated() { return (_clients.size()==0); }
-   bool newConnection() { return this->newconnection; }
-   bool _done;
+   bool newConnection() { return (this->_newConnections.size()>0); }
+
+   typedef std::function<int(std::pair<uint32_t,uint64_t>, RdmaClientPtr client)> ConnectionFunction;
+   void setConnectionFunction(ConnectionFunction f) { this->_connectionFunction = f;}
 
    //! \brief  Close all connections needed by the service daemon.
    //! \return 0 when successful, errno when unsuccessful.
@@ -103,6 +115,8 @@ public:
 
    int getPort() { return _port; }
 
+   typedef std::function<int(struct ibv_wc *completion, RdmaClientPtr client)> CompletionFunction;
+   void setCompletionFunction(CompletionFunction f) { this->_completionFunction = f;}
 private:
 
    void eventChannelHandler(void);
@@ -115,6 +129,8 @@ private:
    std::string _device;
    std::string _interface;
    int         _port;
+   CompletionFunction _completionFunction;
+   ConnectionFunction _connectionFunction;
 
    // list of transfers waiting for completion
 //   std::deque< na_ > _dequeStdioMsgInClient;
@@ -125,7 +141,6 @@ private:
    std::deque< ClientMapPair > _dequeExpectedInClient;
 
    std::deque< std::pair<uint32_t,uint64_t> >  _newConnections;
-   bool newconnection;
 
    //! Listener for RDMA connections.
    bgcios::RdmaServerPtr _rdmaListener;

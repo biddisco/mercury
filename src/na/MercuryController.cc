@@ -45,6 +45,13 @@ using namespace bgcios::stdio;
 
 LOG_DECLARE_FILE("jb");
 
+/*
+#undef LOG_CIOS_DEBUG_MSG
+#undef LOG_DEBUG_MSG
+#define LOG_CIOS_DEBUG_MSG(x) LOG_CIOS_DEBUG_MSG(x);
+#define LOG_DEBUG_MSG(x) LOG_CIOS_DEBUG_MSG(x);
+*/
+
 const uint64_t LargeRegionSize  = 8192;
 /*---------------------------------------------------------------------------*/
 MercuryController::MercuryController(const char *device, const char *interface, int port)
@@ -52,22 +59,21 @@ MercuryController::MercuryController(const char *device, const char *interface, 
   this->_device = device;
   this->_interface = interface;
   this->_port = port;
-  newconnection = false;
-}
+ }
 /*---------------------------------------------------------------------------*/
 MercuryController::~MercuryController()
 {
-  std::cout << "MercuryController destructor clearing clients" << std::endl;
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor clearing clients");
   _dequeUnexpectedInClient.clear();
   _dequeExpectedInClient.clear();
   _clients.clear();
-  std::cout << "MercuryController destructor closing server" << std::endl;
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor closing server");
   this->_rdmaListener.reset();
-  std::cout << "MercuryController destructor closing regions" << std::endl;
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor closing regions");
   this->_largeRegion.reset();
   this->_protectionDomain.reset();
   this->_completionChannel.reset();
-  std::cout << "MercuryController destructor done" << std::endl;
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor done");
 }
 /*---------------------------------------------------------------------------*/
 
@@ -222,14 +228,16 @@ int MercuryController::cleanup(void)
 /*---------------------------------------------------------------------------*/
 void MercuryController::eventMonitor(int Nevents)
 {
-  LOG_DEBUG_MSG("entering event monitor for N : " << Nevents);
+  static int counter = 0;
+  if (counter++ % 50000 == 0 || Nevents>0){
+//    LOG_DEBUG_MSG("entering event monitor for N : %d\n" << Nevents);
+//    printf("entering event monitor for %d %d \n", Nevents, counter);
+  }
   const int eventChannel = 0;
   const int compChannel  = 1;
   const int numFds       = 2;
   //
-  //  modified this so it only checks event channel, just use first descriptor
-  //
-  _done = false;
+  bool _done = false;
 
   pollfd pollInfo[numFds];
   int polltimeout = 0; // seconds*1000; // 10000 == 10 sec
@@ -238,20 +246,17 @@ void MercuryController::eventMonitor(int Nevents)
   pollInfo[eventChannel].fd = _rdmaListener->getEventChannelFd();
   pollInfo[eventChannel].events = POLLIN;
   pollInfo[eventChannel].revents = 0;
-//   printf("added event channel using fd %d to descriptor list", pollInfo[eventChannel].fd);
 
   pollInfo[compChannel].fd = _completionChannel->getChannelFd();
   pollInfo[compChannel].events = POLLIN;
   pollInfo[compChannel].revents = 0;
-//   printf("added completion channel using fd %d to descriptor list", pollInfo[compChannel].fd);
 
   // Process events until told to stop - or timeout.
   while (!_done)
   {
 
     // Wait for an event on one of the descriptors.
-//    int rc = poll(pollInfo, numFds, polltimeout);
-    int rc = poll(pollInfo, 1, polltimeout);
+    int rc = poll(pollInfo, numFds, polltimeout);
 
     // There was no data so try again.
     if (rc == 0)
@@ -292,31 +297,11 @@ void MercuryController::eventMonitor(int Nevents)
       Nevents--;
     }
 
-    //
-    // process messages from the completion channel that we stored
-    //
-    // if (fetchUnexpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id)
-
-    /*
-     if (!_dequeUnexpectedInClient.empty() )
-     {
-     pollInfo[compChannel].events = POLLIN | POLLOUT;
-     RdmaClientPtr client = _dequeUnexpectedInClient.front().second;
-     processUnexpectedMsg(client);
-     _dequeUnexpectedInClient.pop_front();
-     }
-     else
-     {
-     pollInfo[compChannel].events = POLLIN;
-     }
-     */
-
     if (Nevents<=0)
     {
       _done = true;
     }
   }
-  _done = 0;
 
   return;
 }
@@ -339,14 +324,13 @@ void MercuryController::eventChannelHandler(void)
 
       case RDMA_CM_EVENT_CONNECT_REQUEST:
       {
-          printf("RDMA_CM_EVENT_CONNECT_REQUEST\n");
+         printf("RDMA_CM_EVENT_CONNECT_REQUEST in event channel handler\n");
          // Construct a RdmaCompletionQueue object for the new client.
          RdmaCompletionQueuePtr completionQ;
          try {
              completionQ = RdmaCompletionQueuePtr(new RdmaCompletionQueue(_rdmaListener->getEventContext(), RdmaCompletionQueue::MaxQueueSize, _completionChannel->getChannel()));
          }
          catch (bgcios::RdmaError& e) {
-             printf("error creating completion queue\n");
             LOG_ERROR_MSG("error creating completion queue: " << e.what());
             return;
          }
@@ -357,24 +341,24 @@ void MercuryController::eventChannelHandler(void)
              client = RdmaClientPtr(new RdmaClient(_rdmaListener->getEventId(), _protectionDomain, completionQ));
          }
          catch (bgcios::RdmaError& e) {
-             printf("error creating rdma client: %s\n", e.what());
-             completionQ.reset();
-             return;
+           LOG_ERROR_MSG("error creating rdma client: %s\n" << e.what());
+           completionQ.reset();
+           return;
          }
 
-//         printf("qpnum = %d\n", client->getQpNum());
+         printf("qpnum = %d\n", client->getQpNum());
          // Add new client to map of active clients.
          _clients.add(client->getQpNum(), client);
 
          // Add completion queue to completion channel.
          _completionChannel->addCompletionQ(completionQ);
 
+         LOG_DEBUG_MSG("Pre-posting a receive to get the first message");
          // Post a receive to get the first message.
          client->postRecvMessage();
-         // Add connection qp to new connections for retrieval by main app when receiving unexpected
-         LOG_DEBUG_MSG("Adding a new connection for client");
-         _newConnections.push_back(std::make_pair(client->getQpNum(),client->getLastPostRecvKey()));
-         newconnection = true;
+         // we need the wr_id that the request corresponds to
+         std::pair<uint32_t,uint64_t> temp = std::make_pair(client->getQpNum(), client->getLastPostRecvKey());
+         LOG_DEBUG_MSG("New connection posted unexpected receive with wr_id " << temp.second);
 
          // Accept the connection from the new client.
          err = client->accept();
@@ -387,8 +371,16 @@ void MercuryController::eventChannelHandler(void)
             completionQ.reset();
             break;
          }
+         // Add connection qp to new connections for retrieval by main app when receiving unexpected
+         LOG_DEBUG_MSG("Adding a new connection for client");
+         _newConnections.push_back(temp);
+         if (this->_connectionFunction) {
+           LOG_DEBUG_MSG("Calling connectionFunction callback");
+           this->_connectionFunction(temp, client);
+         }
          printf("accepted connection from %s\n", client->getRemoteAddressString().c_str());
 //         cout << client->getTag() << "connection accepted from " << client->getRemoteAddressString() << " is using completion queue " << completionQ->getHandle() << endl;
+
          break;
       }
 
@@ -479,37 +471,29 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
       // Get the next work completion.
       struct ibv_wc *completion = completionQ->popCompletion();
 
-      // Check the status in the completion queue entry.
-      if (completion->status != IBV_WC_SUCCESS) {
-        LOG_ERROR_MSG("failed work completion, status '" << ibv_wc_status_str(completion->status) << "' for operation " <<
-            completionQ->wc_opcode_str(completion->opcode) <<  " (" << completion->opcode << ")");
-        continue;
+      // Find the connection that received a message.
+      client = _clients.get(completion->qp_num);
+
+      printf("\n\nHandling a completion\n\n");
+
+      if (this->_completionFunction) {
+        printf("\n\nCalling completion function\n\n");
+        this->_completionFunction(completion, client);
       }
+    }
+    printf("done processing completions\n");
+  }
 
-      // Check the opcode in the completion queue entry.
-      switch (completion->opcode) {
-        case IBV_WC_SEND:
-        {
-          if (completion->wr_id == requestId) {
-            rc = true;
-          }
+  catch (const RdmaError& e) {
+    LOG_ERROR_MSG("error removing work completions from completion queue: " << bgcios::errorString(e.errcode()));
+  }
 
-          LOG_CIOS_TRACE_MSG("send operation completed successfully for queue pair " << completion->qp_num);
-          break;
-        }
+  return rc;
+}
 
-        case IBV_WC_RECV:
-        {
-          if (completion->wr_id == requestId) {
-            rc = true;
-          }
-          else
-          {
-            LOG_CIOS_TRACE_MSG("receive operation completed successfully for queue pair " << completion->qp_num << " (received " << completion->byte_len << " bytes)");
 
-            // Find the connection that received a message.
-            client = _clients.get(completion->qp_num);
 
+/*
             // Handle the message.
             bgcios::MessageHeader *msghdr = (bgcios::MessageHeader *)client->getInboundMessagePtr();
 
@@ -578,12 +562,12 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
                 printf("getting data rkey=%d  raddr=%lx  rlen=%d\n", rdma_rkey, rdma_addr, rdma_len);
                 rdma_err = getData(client, rdma_addr, rdma_rkey, rdma_len);
                 if (rdma_err==0) {
-                  std::cout << "RDMA read of client data was successful ";
+                  LOG_CIOS_DEBUG_MSG("RDMA read of client data was successful ");
                   Data_text = (char*)(_largeRegion->getAddress());
                   printf("received Data text %s", Data_text);
                 }
                 else {
-                  std::cout << "GetData() failed with " << bgcios::errorString(rdma_err) << std::endl;
+                  LOG_CIOS_DEBUG_MSG("GetData() failed with " << bgcios::errorString(rdma_err));
                 }
 
 
@@ -655,16 +639,7 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
           break;
         }
       }
-    }
-    printf("done proessing completions\n");
-  }
-
-  catch (const RdmaError& e) {
-    LOG_ERROR_MSG("error removing work completions from completion queue: " << bgcios::errorString(e.errcode()));
-  }
-
-  return rc;
-}
+      */
 /*---------------------------------------------------------------------------*/
 std::pair<uint32_t,uint64_t> MercuryController::getNewConnection()
 {
@@ -676,7 +651,6 @@ std::pair<uint32_t,uint64_t> MercuryController::getNewConnection()
   else {
     result = _newConnections.front();
     _newConnections.pop_front();
-    this->newconnection = false;
   }
   return result;
 }
