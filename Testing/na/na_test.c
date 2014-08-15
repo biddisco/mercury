@@ -536,7 +536,7 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
 #ifdef NA_HAS_VERBS
     if (na_test_use_verbs_g) {
       // block until a connection is made
-//      na_verbs_accept(na_class);
+      na_verbs_accept(na_class);
     }
 #endif
 

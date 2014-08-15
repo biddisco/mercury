@@ -233,6 +233,7 @@ if(NA_USE_VERBS)
   set(NA_SRCS
     ${NA_SRCS}
     ${CMAKE_CURRENT_SOURCE_DIR}/na_verbs.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/MercuryController.cc
   )
 endif()
 
