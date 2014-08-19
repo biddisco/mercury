@@ -60,6 +60,7 @@ namespace stdio
 class MercuryController
 {
 public:
+  typedef std::pair<uint32_t, RdmaClientPtr> ClientMapPair;
 
    //! \brief  Default constructor.
    //! \param  config Configuration from command line and properties file.
@@ -90,7 +91,7 @@ public:
    //! \brief  Monitor for events from all channels.
    //! \return Nothing.
 
-   void eventMonitor(int Nevents);
+   int  eventMonitor(int Nevents);
 
    bool addUnexpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);
    bool addExpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);
@@ -104,6 +105,16 @@ public:
 
    bgcios::RdmaClientPtr getFirstClient() {
      return _clients.begin()->second;
+   }
+
+   int getNumClients() {
+     return _clients.size();
+   }
+
+   template <typename Function>
+   void for_each_client(Function lambda)
+   {
+     std::for_each(_clients.begin(), _clients.end(), lambda);
    }
 
    std::pair<uint32_t,uint64_t> getNewConnection();
@@ -136,7 +147,6 @@ private:
 //   std::deque< na_ > _dequeStdioMsgInClient;
 
    // list of Messages
-   typedef std::pair<uint32_t, RdmaClientPtr> ClientMapPair;
    std::deque< ClientMapPair > _dequeUnexpectedInClient;
    std::deque< ClientMapPair > _dequeExpectedInClient;
 
@@ -198,7 +208,7 @@ private:
        uint32_t rc = 0;
        try {
            // Post a rdma read request to the send queue using the large message region.
-           std::cout << "Here 1 " << std::endl;
+           std::cout << "Here 1 (getData) " << std::endl;
            _largeRegion->setMessageLength(length);
            std::cout << "Here 2 " << std::endl;
            uint64_t reqID = (uint64_t)_largeRegion->getAddress();

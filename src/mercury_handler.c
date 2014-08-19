@@ -949,6 +949,7 @@ hg_handler_start_request(void)
     hg_handler_pending_handle_g = hg_handle;
 
     /* Post a new unexpected receive */
+    printf("posting unexpected receive before hg_handler_start_request\n");
     na_ret = NA_Msg_recv_unexpected(hg_na_class_g, hg_context_g,
             hg_handler_recv_input_cb, hg_handle, hg_handle->in_buf,
             hg_handle->in_buf_size, NA_OP_ID_IGNORE);
@@ -957,8 +958,8 @@ hg_handler_start_request(void)
         ret = HG_FAIL;
         goto done;
     }
-
 done:
+printf("End of hg_handler_start_request\n");
     return ret;
 }
 
