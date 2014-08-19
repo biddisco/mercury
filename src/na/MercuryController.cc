@@ -38,6 +38,7 @@
 #include <sstream>
 #include <queue>
 #include <stdio.h>
+#include <thread>
 
 #include "cscs_messages.h"
 
@@ -226,23 +227,19 @@ int MercuryController::cleanup(void)
   return 0;
 }
 /*---------------------------------------------------------------------------*/
-void MercuryController::eventMonitor(int Nevents)
+int MercuryController::eventMonitor(int Nevents)
 {
-  static int counter = 0;
-  if (counter++ % 50000 == 0 || Nevents>0){
-//    LOG_DEBUG_MSG("entering event monitor for N : %d\n" << Nevents);
-//    printf("entering event monitor for %d %d \n", Nevents, counter);
-  }
   const int eventChannel = 0;
   const int compChannel  = 1;
   const int numFds       = 2;
+  int       rec_events   = 0;
   //
   bool _done = false;
 
   pollfd pollInfo[numFds];
   int polltimeout = 0; // seconds*1000; // 10000 == 10 sec
 
-  LOG_CIOS_TRACE_MSG("Polling on File Descriptor " << _rdmaListener->getEventChannelFd());
+//  LOG_CIOS_TRACE_MSG("Polling on File Descriptor " << _rdmaListener->getEventChannelFd());
   pollInfo[eventChannel].fd = _rdmaListener->getEventChannelFd();
   pollInfo[eventChannel].events = POLLIN;
   pollInfo[eventChannel].revents = 0;
@@ -254,17 +251,20 @@ void MercuryController::eventMonitor(int Nevents)
   // Process events until told to stop - or timeout.
   while (!_done)
   {
+    pollInfo[eventChannel].revents = 0;
+    pollInfo[compChannel].revents = 0;
 
     // Wait for an event on one of the descriptors.
     int rc = poll(pollInfo, numFds, polltimeout);
 
-    // There was no data so try again.
-    if (rc == 0)
-    {
+    // If there were no events/messages
+    if (rc == 0) {
+      // if we were told to wait for at least one event, retry
       if (Nevents>0) continue;
+      // otherwise, leave
       else break;
     }
-    LOG_CIOS_TRACE_MSG("Got something");
+    LOG_CIOS_TRACE_MSG("A channel has received an event/message " << std::this_thread::get_id() );
 
     // There was an error so log the failure and try again.
     if (rc == -1)
@@ -276,7 +276,7 @@ void MercuryController::eventMonitor(int Nevents)
         continue;
       }
       LOG_ERROR_MSG("error polling socket descriptors: " << bgcios::errorString(err));
-      return;
+      return 0;
     }
 
     // Check for an event on the event channel.
@@ -286,6 +286,7 @@ void MercuryController::eventMonitor(int Nevents)
       eventChannelHandler();
       pollInfo[eventChannel].revents = 0;
       Nevents--;
+      rec_events++;
     }
 
     // Check for an event on the completion channel.
@@ -295,6 +296,7 @@ void MercuryController::eventMonitor(int Nevents)
       completionChannelHandler(0);
       pollInfo[compChannel].revents = 0;
       Nevents--;
+      rec_events++;
     }
 
     if (Nevents<=0)
@@ -303,7 +305,7 @@ void MercuryController::eventMonitor(int Nevents)
     }
   }
 
-  return;
+  return rec_events;
 }
 /*---------------------------------------------------------------------------*/
 void MercuryController::eventChannelHandler(void)
@@ -353,12 +355,11 @@ void MercuryController::eventChannelHandler(void)
          // Add completion queue to completion channel.
          _completionChannel->addCompletionQ(completionQ);
 
-         LOG_DEBUG_MSG("Pre-posting a receive to get the first message");
          // Post a receive to get the first message.
          client->postRecvMessage();
          // we need the wr_id that the request corresponds to
          std::pair<uint32_t,uint64_t> temp = std::make_pair(client->getQpNum(), client->getLastPostRecvKey());
-         LOG_DEBUG_MSG("New connection posted unexpected receive with wr_id " << temp.second);
+         LOG_DEBUG_MSG("New connection Pre-posted an unexpected receive with wr_id " << temp.second);
 
          // Accept the connection from the new client.
          err = client->accept();
@@ -372,13 +373,13 @@ void MercuryController::eventChannelHandler(void)
             break;
          }
          // Add connection qp to new connections for retrieval by main app when receiving unexpected
-         LOG_DEBUG_MSG("Adding a new connection for client");
-         _newConnections.push_back(temp);
-         if (this->_connectionFunction) {
-           LOG_DEBUG_MSG("Calling connectionFunction callback");
-           this->_connectionFunction(temp, client);
-         }
-         printf("accepted connection from %s\n", client->getRemoteAddressString().c_str());
+//         LOG_DEBUG_MSG("Adding a new connection for client");
+//         _newConnections.push_back(temp);
+//         if (this->_connectionFunction) {
+//           LOG_DEBUG_MSG("Calling connectionFunction callback");
+//           this->_connectionFunction(temp, client);
+//         }
+         LOG_DEBUG_MSG("accepted connection from " << client->getRemoteAddressString().c_str());
 //         cout << client->getTag() << "connection accepted from " << client->getRemoteAddressString() << " is using completion queue " << completionQ->getHandle() << endl;
 
          break;
@@ -401,7 +402,7 @@ void MercuryController::eventChannelHandler(void)
          uint32_t qp = _rdmaListener->getEventQpNum();
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
-
+printf("\n\n\ndisconnecting \n\n\n");
          // Complete disconnect initiated by peer.
          err = client->disconnect(false);
          if (err == 0) {
@@ -470,18 +471,17 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
 
       // Get the next work completion.
       struct ibv_wc *completion = completionQ->popCompletion();
-
-      // Find the connection that received a message.
+      LOG_DEBUG_MSG("Removing wr_id " << completion->wr_id);
+      // Find the connection that received the message.
       client = _clients.get(completion->qp_num);
 
-      printf("\n\nHandling a completion\n\n");
-
       if (this->_completionFunction) {
-        printf("\n\nCalling completion function\n\n");
+        printf("* * * Calling completion function\n\n");
         this->_completionFunction(completion, client);
+        printf("* * * Finished Calling completion function\n\n");
       }
     }
-    printf("done processing completions\n");
+    printf("finished completionChannelHandler\n");
   }
 
   catch (const RdmaError& e) {
@@ -644,7 +644,7 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
 std::pair<uint32_t,uint64_t> MercuryController::getNewConnection()
 {
   std::pair<uint32_t,uint64_t> result;
-  this->eventMonitor(0);
+//  this->eventMonitor(0);
   if (_newConnections.empty()) {
     throw std::runtime_error("No new connections available to pop");
   }
