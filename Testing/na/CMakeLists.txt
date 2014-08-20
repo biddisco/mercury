@@ -26,19 +26,26 @@ function(add_na_test test_name server client)
     # Dynamic client/server test
     #
     if(${comm} STREQUAL "verbs")
-      # build a command string using one exec for each client
-      set(CLIENT_STRING "")
-      foreach(i RANGE ${LOOP_CLIENTS})
-        set(CLIENT_STRING ${CLIENT_STRING} 
-          : -n 1 $<TARGET_FILE:na_test_${client}> ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}
+      if (MERCURY_TESTING_SRUN_MPMD)
+        string(REPLACE ";" " " test_args "${test_args}")
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/na_test_${full_test_name} 
+          " 0   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/na_test_${server} ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME} \n"
         )
-      endforeach(i)
-
-      add_test(NAME "na_${full_test_name}"
-        COMMAND ${MPIEXEC} 
-          -n 1 $<TARGET_FILE:na_test_${server}> ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}
-          ${CLIENT_STRING}
-      )
+        file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/na_test_${full_test_name}
+          " 1-${MPI_NUM_CLIENTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/na_test_${client} ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME} \n"
+        )
+        add_test(
+          NAME "na_test_${full_test_name}"
+          COMMAND ${MPIEXEC} -n ${MPIEXEC_MAX_NUMPROCS} --multi-prog ${CMAKE_CURRENT_BINARY_DIR}/na_test_${full_test_name}
+        )
+      else()
+        add_test(
+          NAME "na_${full_test_name}"
+          COMMAND ${MPIEXEC}
+            -n 1 $<TARGET_FILE:na_test_${server}> ${test_args} :
+            -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:na_test_${client}> ${test_args}
+        )
+      endif()
     else()
       add_test(NAME "na_${full_test_name}"
         COMMAND $<TARGET_FILE:mercury_test_driver>
