@@ -76,66 +76,7 @@ MercuryController::~MercuryController()
   this->_completionChannel.reset();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor done");
 }
-/*---------------------------------------------------------------------------*/
 
-//////////////////////////////////////////////////////
-//
-// This file contains the function to generate a 32 bit
-// CRC utilizing a 16 entry table.
-//
-//
-// The CRC polynomial used here is:
-//
-// x^32 + x^26 + x^23 + x^22 + x^16 +
-// x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^1 + x^0
-//
-//////////////////////////////////////////////////////
-
-/*---------------------------------------------------------------------------*/
-static uint32_t Crc32x4_Table[16] = {
-    0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
-    0x76dc4190, 0x6b6b51f4, 0x4db26158, 0x5005713c,
-    0xedb88320, 0xf00f9344, 0xd6d6a3e8, 0xcb61b38c,
-    0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c
-};
-/*---------------------------------------------------------------------------*/
-
-//////////////////////////////////////////////////////
-//
-// Calcuate the CRC for a given buffer of data.
-// To do just one buffer start with an ulInitialCrc of 0.
-// To continue a multibuffer CRC provide the value
-// returned from the last call to Crc32n as the ulInitialCrcValue.
-//
-// inputs:
-//    ulInitialCrc -- initial value for the CRC.
-//    pData -- pointer to the data to calculate the CRC for.
-//    ulLen -- length of the data to calculate the CRC for.
-// outputs:
-//    returns -- the CRC of the buffer.
-//
-//////////////////////////////////////////////////////
-uint32_t crc32n(uint32_t ulInitialCrc,
-                     unsigned char *pData,
-                     uint32_t ulLen)
-{
-  uint32_t n;
-  uint32_t t;
-  unsigned char *p;
-  uint32_t ulCrc = ulInitialCrc;
-
-  for (n = ulLen, p = pData; n > 0; n--, p++) {
-    unsigned char c;
-    c = *p;                     // gbrab the character.
-
-    t = ulCrc ^ (c & 0x0f);                         // lower nibble
-    ulCrc = (ulCrc >> 4) ^ Crc32x4_Table[t & 0xf];
-    t = (uint32_t)(ulCrc ^ ((uint32_t)(c >> 4)));               // upper nibble.
-    ulCrc = (ulCrc >> 4) ^ Crc32x4_Table[t & 0xf];
-  }
-
-  return (ulCrc);
-}
 /*---------------------------------------------------------------------------*/
 int MercuryController::startup()
 {
@@ -226,20 +167,19 @@ int MercuryController::cleanup(void)
 {
   return 0;
 }
+
 /*---------------------------------------------------------------------------*/
-int MercuryController::eventMonitor(int Nevents)
+void MercuryController::eventMonitor(int Nevents)
 {
   const int eventChannel = 0;
   const int compChannel  = 1;
   const int numFds       = 2;
-  int       rec_events   = 0;
   //
   bool _done = false;
 
   pollfd pollInfo[numFds];
   int polltimeout = 0; // seconds*1000; // 10000 == 10 sec
 
-//  LOG_CIOS_TRACE_MSG("Polling on File Descriptor " << _rdmaListener->getEventChannelFd());
   pollInfo[eventChannel].fd = _rdmaListener->getEventChannelFd();
   pollInfo[eventChannel].events = POLLIN;
   pollInfo[eventChannel].revents = 0;
@@ -276,7 +216,7 @@ int MercuryController::eventMonitor(int Nevents)
         continue;
       }
       LOG_ERROR_MSG("error polling socket descriptors: " << bgcios::errorString(err));
-      return 0;
+      return;
     }
 
     // Check for an event on the event channel.
@@ -286,7 +226,6 @@ int MercuryController::eventMonitor(int Nevents)
       eventChannelHandler();
       pollInfo[eventChannel].revents = 0;
       Nevents--;
-      rec_events++;
     }
 
     // Check for an event on the completion channel.
@@ -296,7 +235,6 @@ int MercuryController::eventMonitor(int Nevents)
       completionChannelHandler(0);
       pollInfo[compChannel].revents = 0;
       Nevents--;
-      rec_events++;
     }
 
     if (Nevents<=0)
@@ -304,9 +242,8 @@ int MercuryController::eventMonitor(int Nevents)
       _done = true;
     }
   }
-
-  return rec_events;
 }
+
 /*---------------------------------------------------------------------------*/
 void MercuryController::eventChannelHandler(void)
 {
@@ -372,15 +309,7 @@ void MercuryController::eventChannelHandler(void)
             completionQ.reset();
             break;
          }
-         // Add connection qp to new connections for retrieval by main app when receiving unexpected
-//         LOG_DEBUG_MSG("Adding a new connection for client");
-//         _newConnections.push_back(temp);
-//         if (this->_connectionFunction) {
-//           LOG_DEBUG_MSG("Calling connectionFunction callback");
-//           this->_connectionFunction(temp, client);
-//         }
          LOG_DEBUG_MSG("accepted connection from " << client->getRemoteAddressString().c_str());
-//         cout << client->getTag() << "connection accepted from " << client->getRemoteAddressString() << " is using completion queue " << completionQ->getHandle() << endl;
 
          break;
       }
@@ -402,7 +331,6 @@ void MercuryController::eventChannelHandler(void)
          uint32_t qp = _rdmaListener->getEventQpNum();
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
-printf("\n\n\ndisconnecting \n\n\n");
          // Complete disconnect initiated by peer.
          err = client->disconnect(false);
          if (err == 0) {
@@ -429,9 +357,6 @@ printf("\n\n\ndisconnecting \n\n\n");
          LOG_CIOS_DEBUG_MSG("destroying completion queue " << completionQ->getHandle());
          completionQ.reset();
 
-         //clear any job info for the connection--find Job ID(s) associated with client, and handle like CloseStdio message
-         //_jobs.clear();
-
          break;
       }
 
@@ -449,6 +374,7 @@ printf("\n\n\ndisconnecting \n\n\n");
 
    return;
 }
+
 /*---------------------------------------------------------------------------*/
 bool MercuryController::completionChannelHandler(uint64_t requestId)
 {
@@ -491,169 +417,6 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
   return rc;
 }
 
-
-
-/*
-            // Handle the message.
-            bgcios::MessageHeader *msghdr = (bgcios::MessageHeader *)client->getInboundMessagePtr();
-
-            switch (msghdr->type) {
-              case 1:
-                //
-                // legacy code, ignore this, left for future use
-                //
-                printf("write message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                ptr = (uint64_t*)(msghdr+1);
-                rdma_rkey = (uint32_t)ptr[0];
-                rdma_addr = ptr[1];
-                rdma_len  = (uint32_t)ptr[2];
-                printf("getting data rkey=%d  raddr=%lx  rlen=%d\n", rdma_rkey, rdma_addr, rdma_len);
-                getData(client, rdma_addr, rdma_rkey, rdma_len);
-                printf("received data CRC = %x   1st words=%lx %lx %lx %lx\n", crc32n(0, (unsigned char*)_largeRegion->getAddress(), rdma_len), ((uint64_t*)_largeRegion->getAddress())[0], ((uint64_t*)_largeRegion->getAddress())[1], ((uint64_t*)_largeRegion->getAddress())[2], ((uint64_t*)_largeRegion->getAddress())[3]);
-
-                //                            outMsg = (ErrorAckMessage *)client->getOutboundMessagePtr();
-                //                            memcpy(&(outMsg->header), msghdr, sizeof(MessageHeader));
-                //                            outMsg->header.type = ErrorAck;
-                //                            outMsg->header.returnCode = bgcios::UnsupportedType;
-                //                            outMsg->header.errorCode = 0;
-                //                            outMsg->header.length = sizeof(ErrorAckMessage);
-                //                            client->setOutboundMessageLength(outMsg->header.length);
-                break;
-
-              case 2:
-                //
-                // legacy code, ignore this, left for future use
-                //
-                printf("read message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                ptr = (uint64_t*)(msghdr+1);
-                rdma_rkey = (uint32_t)ptr[0];
-                rdma_addr = ptr[1];
-                rdma_len  = (uint32_t)ptr[2];
-
-                memset(_largeRegion->getAddress(), 0xa7, rdma_len);
-                printf("putting data rkey=%d  raddr=%lx  rlen=%d  CRC %x\n", rdma_rkey, rdma_addr, rdma_len, crc32n(0, (unsigned char*)_largeRegion->getAddress(), rdma_len));
-
-                putData(client, rdma_addr, rdma_rkey, rdma_len);
-                printf("pushed data\n");
-
-                outMsg = (ErrorAckMessage *)client->getOutboundMessagePtr();
-                memcpy(&(outMsg->header), msghdr, sizeof(MessageHeader));
-                outMsg->header.type = ErrorAck;
-                outMsg->header.returnCode = bgcios::UnsupportedType;
-                outMsg->header.errorCode = 0;
-                outMsg->header.length = sizeof(ErrorAckMessage);
-                client->setOutboundMessageLength(outMsg->header.length);
-                break;
-
-              case 3:
-                //
-                // legacy code, ignore this, left for future use
-                //
-                printf("Text message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                ptr = (uint64_t*)(msghdr+1);
-                rdma_rkey =  (uint32_t)ptr[0];
-                rdma_addr =            ptr[1];
-                rdma_len  =  (uint32_t)ptr[2];
-                Message_text = (char*)&ptr[3];
-                printf("received message text \n\n***\n%s\n***\n", Message_text);
-
-                // test my theory by waiting 45 seconds before fetching data
-
-                printf("getting data rkey=%d  raddr=%lx  rlen=%d\n", rdma_rkey, rdma_addr, rdma_len);
-                rdma_err = getData(client, rdma_addr, rdma_rkey, rdma_len);
-                if (rdma_err==0) {
-                  LOG_CIOS_DEBUG_MSG("RDMA read of client data was successful ");
-                  Data_text = (char*)(_largeRegion->getAddress());
-                  printf("received Data text %s", Data_text);
-                }
-                else {
-                  LOG_CIOS_DEBUG_MSG("GetData() failed with " << bgcios::errorString(rdma_err));
-                }
-
-
-                //                            outMsg = (ErrorAckMessage *)client->getOutboundMessagePtr();
-                //                            memcpy(&(outMsg->header), msghdr, sizeof(MessageHeader));
-                //                            outMsg->header.type = ErrorAck;
-                //                            outMsg->header.returnCode = bgcios::UnsupportedType;
-                //                            outMsg->header.errorCode = 0;
-                //                            outMsg->header.length = sizeof(ErrorAckMessage);
-                //                            client->setOutboundMessageLength(outMsg->header.length);
-                break;
-
-              case CSCS_user_message::UnexpectedMessage:
-                printf("Unexpected message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                // put all the Unexpected messages onto a processing queue
-                if ( addUnexpectedMsg(client, completion->qp_num) ) continue;
-                break;
-
-              case CSCS_user_message::ExpectedMessage:
-                printf("Expected message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                ptr = (uint64_t*)(msghdr+1);
-                Message_text = (char*)&ptr[3];
-                printf("received message text \n\n***\n%s\n***\n", Message_text);
-                // put all the Unexpected messages onto a processing queue
-                if ( addUnexpectedMsg(client, completion->qp_num) ) continue;
-                break;
-
-              default:
-                printf("unsupported message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-                outMsg = (ErrorAckMessage *)client->getOutboundMessagePtr();
-                memcpy(&(outMsg->header), msghdr, sizeof(MessageHeader));
-                outMsg->header.type = ErrorAck;
-                outMsg->header.returnCode = bgcios::UnsupportedType;
-                outMsg->header.errorCode = 0;
-                outMsg->header.length = sizeof(ErrorAckMessage);
-                client->setOutboundMessageLength(outMsg->header.length);
-
-                break;
-            }
-
-            printf("posting receive\n");
-            // Post a receive to get next message.
-            client->postRecvMessage();
-
-            // Send reply message in outbound message buffer to client.
-            if (client->isOutboundMessageReady()) {
-              printf("posting send\n");
-              client->postSendMessage();
-              printf("send posted\n");
-            }
-
-          }
-          break;
-        }
-
-        case IBV_WC_RDMA_READ:
-        {
-          if (completion->wr_id == requestId) {
-            rc = true;
-          }
-
-          LOG_CIOS_DEBUG_MSG("rdma read operation completed successfully for queue pair " << completion->qp_num);
-          break;
-        }
-
-        default:
-        {
-          LOG_ERROR_MSG("unsupported operation " << completion->opcode << " in work completion");
-          break;
-        }
-      }
-      */
-/*---------------------------------------------------------------------------*/
-std::pair<uint32_t,uint64_t> MercuryController::getNewConnection()
-{
-  std::pair<uint32_t,uint64_t> result;
-//  this->eventMonitor(0);
-  if (_newConnections.empty()) {
-    throw std::runtime_error("No new connections available to pop");
-  }
-  else {
-    result = _newConnections.front();
-    _newConnections.pop_front();
-  }
-  return result;
-}
 /*---------------------------------------------------------------------------*/
 bool MercuryController::addUnexpectedMsg(const RdmaClientPtr & client, uint32_t qp_id)
 {
@@ -674,6 +437,7 @@ bool MercuryController::addUnexpectedMsg(const RdmaClientPtr & client, uint32_t 
   _dequeUnexpectedInClient.push_back(ClientMapPair(qp_id,client));
   return true;
 }
+
 /*---------------------------------------------------------------------------*/
 bool MercuryController::addExpectedMsg(const RdmaClientPtr & client, uint32_t qp_id)
 {
@@ -694,6 +458,7 @@ bool MercuryController::addExpectedMsg(const RdmaClientPtr & client, uint32_t qp
   _dequeExpectedInClient.push_back(ClientMapPair(qp_id,client));
   return true;
 }
+
 /*---------------------------------------------------------------------------*/
 bool MercuryController::fetchUnexpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id)
 {
@@ -716,6 +481,7 @@ bool MercuryController::fetchUnexpectedMsg(void *buf, uint64_t buf_size, uint32_
 
   return true;
 }
+
 /*---------------------------------------------------------------------------*/
 bool MercuryController::fetchExpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id)
 {
@@ -738,11 +504,3 @@ bool MercuryController::fetchExpectedMsg(void *buf, uint64_t buf_size, uint32_t 
   return true;
 }
 
-/*
-auto start_time = std::chrono::high_resolution_clock::now();
-
-auto t2 = std::chrono::high_resolution_clock::now();
-auto sec = std::chrono::duration_cast < std::chrono::seconds
-    > (t2 - start_time).count();
-     if (sec>seconds) _done=true;
-*/

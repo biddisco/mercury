@@ -78,7 +78,6 @@ public:
    int startup();
 
    bool isTerminated() { return (_clients.size()==0); }
-   bool newConnection() { return (this->_newConnections.size()>0); }
 
    typedef std::function<int(std::pair<uint32_t,uint64_t>, RdmaClientPtr client)> ConnectionFunction;
    void setConnectionFunction(ConnectionFunction f) { this->_connectionFunction = f;}
@@ -91,7 +90,7 @@ public:
    //! \brief  Monitor for events from all channels.
    //! \return Nothing.
 
-   int  eventMonitor(int Nevents);
+   void eventMonitor(int Nevents);
 
    bool addUnexpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);
    bool addExpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);

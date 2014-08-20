@@ -55,6 +55,9 @@ mark_as_advanced(MERCURY_TESTING_TEMP_DIRECTORY)
 option(MERCURY_TESTING_CORESIDENT "Enable testing of coresident mode." OFF)
 mark_as_advanced(MERCURY_TESTING_CORESIDENT)
 
+option(MERCURY_TESTING_SRUN_MPMD "Generate srun compatible test commands (srun --multi-prog config) " 0) 
+mark_as_advanced(MERCURY_TESTING_SRUN_MPMD)
+
 #------------------------------------------------------------------------------
 # Compile kwsys library and setup TestDriver
 #------------------------------------------------------------------------------
@@ -129,12 +132,26 @@ macro(add_mercury_test_comm test_name comm opt params)
   # Dynamic client/server test
   #
   if(${comm} STREQUAL "verbs")
-    # Dynamic client/server test
-    add_test(NAME "mercury_${full_test_name}"
-      COMMAND ${MPIEXEC} 
-        -n 1 $<TARGET_FILE:hg_test_server> ${test_args} :
-        -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:hg_test_${test_name}> ${test_args}
-    )
+    if (MERCURY_TESTING_SRUN_MPMD)
+      string(REPLACE ";" " " test_args "${test_args}")
+      file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name} 
+        " 0   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_server ${test_args} \n"
+      )
+      file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name}
+        " 1-${MPI_NUM_CLIENTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_${test_name} ${test_args} \n"
+      )
+      add_test(
+        NAME "mercury_${full_test_name}"
+        COMMAND ${MPIEXEC} -n ${MPIEXEC_MAX_NUMPROCS} --multi-prog ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name}
+      )
+   else()
+      add_test(
+        NAME "mercury_${full_test_name}"
+        COMMAND ${MPIEXEC}
+          -n 1 $<TARGET_FILE:hg_test_server> ${test_args} :
+          -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:hg_test_${test_name}> ${test_args}
+      )
+    endif()
   else()
     add_test(NAME "mercury_${full_test_name}"
       COMMAND $<TARGET_FILE:mercury_test_driver>
