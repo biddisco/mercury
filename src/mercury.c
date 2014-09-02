@@ -671,7 +671,7 @@ HG_Finalize(void)
         ret = HG_FAIL;
         return ret;
     }
-
+printf("here finalize 1\n");
     if (hg_bulk_initialized_internal_g) {
         ret = HG_Bulk_finalize();
         if (ret != HG_SUCCESS) {
@@ -681,6 +681,7 @@ HG_Finalize(void)
         }
         hg_bulk_initialized_internal_g = HG_FALSE;
     }
+    printf("here finalize 2\n");
 
     hg_handler_finalize();
 
@@ -831,7 +832,8 @@ HG_Forward(na_addr_t addr, hg_id_t id, void *in_struct, void *out_struct,
     }
 
     hg_handle->id = id;
-    /* TODO add cookie hg_handle->cookie = xx */
+printf("Got a handle with id %d\n");
+/* TODO add cookie hg_handle->cookie = xx */
     hg_handle->addr = addr;
     hg_handle->local = NA_Addr_is_self(hg_na_class_g, addr);
 

@@ -33,8 +33,10 @@
  #define LOG_CIOS_TRACE_DISABLE
  #define LOG_CIOS_INFO_DISABLE
  #define LOG_CIOS_WARN_DISABLE
-#undef LOG_CIOS_DEBUG_MSG
-#define LOG_CIOS_DEBUG_MSG(x) std::cout << (x) << std::endl;
+ #undef LOG_CIOS_DEBUG_MSG
+#else
+//  #include "utility/include/Log.h"
+//  LOG_DECLARE_FILE( "jb" );
 #endif
 
 // Includes
@@ -92,22 +94,11 @@ public:
 
    void eventMonitor(int Nevents);
 
-   bool addUnexpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);
-   bool addExpectedMsg(const RdmaClientPtr & client, uint32_t qp_id);
-
    //! Listener for RDMA connections.
    bgcios::RdmaServerPtr getServer() { return this->_rdmaListener; }
    bgcios::RdmaProtectionDomainPtr getProtectionDomain() { return this->_protectionDomain; }
    bgcios::RdmaClientPtr getClient(uint32_t qp) {
      return _clients.get(qp);
-   }
-
-   bgcios::RdmaClientPtr getFirstClient() {
-     return _clients.begin()->second;
-   }
-
-   int getNumClients() {
-     return _clients.size();
    }
 
    template <typename Function>
@@ -116,17 +107,13 @@ public:
      std::for_each(_clients.begin(), _clients.end(), lambda);
    }
 
-   std::pair<uint32_t,uint64_t> getNewConnection();
-
-   bool fetchUnexpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id);
-   bool fetchExpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id);
-
    bgcios::RdmaCompletionChannelPtr GetCompletionChannel() { return this->_completionChannel; }
 
    int getPort() { return _port; }
 
    typedef std::function<int(struct ibv_wc *completion, RdmaClientPtr client)> CompletionFunction;
    void setCompletionFunction(CompletionFunction f) { this->_completionFunction = f;}
+
 private:
 
    void eventChannelHandler(void);
@@ -139,17 +126,9 @@ private:
    std::string _device;
    std::string _interface;
    int         _port;
+
    CompletionFunction _completionFunction;
    ConnectionFunction _connectionFunction;
-
-   // list of transfers waiting for completion
-//   std::deque< na_ > _dequeStdioMsgInClient;
-
-   // list of Messages
-   std::deque< ClientMapPair > _dequeUnexpectedInClient;
-   std::deque< ClientMapPair > _dequeExpectedInClient;
-
-   std::deque< std::pair<uint32_t,uint64_t> >  _newConnections;
 
    //! Listener for RDMA connections.
    bgcios::RdmaServerPtr _rdmaListener;
@@ -171,7 +150,7 @@ private:
    //! \param  rkey Key of remote memory region.
    //! \param  length Length of data to transfer.
    //! \return 0 when successful, error when unsuccessful.
-
+/*
    uint32_t putData(const RdmaClientPtr& client, uint64_t address, uint32_t rkey, uint32_t length)
    {
        uint32_t rc = 0;
@@ -233,7 +212,7 @@ private:
 
        return rc;
    }
-
+*/
 
 };
 
