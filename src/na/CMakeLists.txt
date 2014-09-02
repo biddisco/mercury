@@ -25,7 +25,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${NA_CMAKE_DIR})
 # by other projects.
 #-----------------------------------------------------------------------------
 if(NOT NA_EXPORTED_TARGETS)
-  set(NA_EXPORTED_TARGETS "mercury-targets")
+  set(NA_EXPORTED_TARGETS ${MERCURY_EXPORTED_TARGETS})
 endif()
 
 #------------------------------------------------------------------------------
@@ -77,25 +77,36 @@ endif()
 
 option(NA_USE_VERBS "Use VERBS." OFF)
 if(NA_USE_VERBS)
-  include_directories(
-    ${BGC_INCLUDE_DIR}
-  )
-  find_package(OFED) 
+  find_package(IB_VERBS)
+  find_package(RDMA_CM)
   find_package(Boost 1.48.0 REQUIRED regex)
+  find_package(rdmahelper)
 
   option(NA_VERBS_USE_LOG4CXX "Use Log4Cxx library for debug messages." OFF)
   if(NA_VERBS_USE_LOG4CXX)
-    add_definitions(-DNA_VERBS_USE_LOG4CXX)  
+    add_definitions(-DNA_VERBS_USE_LOG4CXX)
   endif()
-  
-  if(OFED_FOUND)
+
+  add_definitions(${rdmahelper_DEFINITIONS})
+
+  if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
     set(NA_PLUGINS ${NA_PLUGINS} verbs)
     set(NA_HAS_VERBS 1)
     set(NA_EXT_LIB_DEPENDENCIES
       ${NA_EXT_LIB_DEPENDENCIES}
-      ${_ibverbs_LIBRARY}
-      ${_rdma_LIBRARY}
+      ${IB_VERBS_LIBRARIES}
+      ${RDMA_CM_LIBRARIES}
       ${Boost_LIBRARIES}
+    )
+    set(NA_EXT_INCLUDE_DEPENDENCIES
+      ${NA_EXT_INCLUDE_DEPENDENCIES}
+      ${BGC_INCLUDE_DIR}
+    )
+    include_directories(
+      ${Boost_INCLUDE_DIR}
+      ${IB_VERBS_INCLUDE_DIRS}
+      ${RDMA_CM_INCLUDE_DIRS}
+      ${rdmahelper_INCLUDE_DIR}
     )
     set(NA_EXT_INCLUDE_DEPENDENCIES
       ${NA_EXT_INCLUDE_DEPENDENCIES}
@@ -250,7 +261,7 @@ endif()
 
 if(NA_USE_VERBS)
   target_link_libraries(na
-    rdma_lib
+    rdmahelper
     ${Boost_REGEX_LIBRARY_DEBUG}
   )
 endif()

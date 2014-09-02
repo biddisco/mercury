@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
- *                    UChicago Argonne, LLC and The HDF Group.
+ *�������������������������������������� UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
  * The full copyright notice, including terms governing use, modification,
@@ -61,10 +61,14 @@ printf("Finished test server \n");
 //            return EXIT_FAILURE;
 //        }
 
+        int num1 = hg_atomic_get32(&hg_test_finalizing_count_g);
+        printf("Handled something, checking finalize count with %d clients from %d\n",num1,numClients);
         if (hg_atomic_cas32(&hg_test_finalizing_count_g, numClients, 0))
             finalizing = HG_TRUE;
-        int num = hg_atomic_get32(&hg_test_finalizing_count_g);
-        printf("after finalization clients remaining are %d\n",num);
+        if (finalizing) {
+          int num = hg_atomic_get32(&hg_test_finalizing_count_g);
+          printf("after finalization clients remaining are %d\n",num);
+        }
     }
 
     printf("# Finalizing...\n");

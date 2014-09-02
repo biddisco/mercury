@@ -18,6 +18,16 @@ extern "C" {
 #include <string.h>
 #include <poll.h>
 
+#include"utility/include/Log.h"
+
+using namespace log4cxx;
+using namespace log4cxx::helpers;
+
+//static log4cxx::LoggerPtr log_logger_(log4cxx::Logger::getLogger( "jb." ));
+static int log4cxx_initialized = 0;
+
+//LOG_DECLARE_FILE("jb");
+
 #include "MercuryController.h"
 #include <ramdisk/include/services/common/RdmaClient.h>
 #include <ramdisk/include/services/common/RdmaDevice.h>
@@ -41,17 +51,9 @@ extern "C" {
 #include <chrono>
 //
 std::mutex verbs_completion_map_mutex;
-
 using namespace bgcios;
 using namespace bgcios::stdio;
-
-using namespace log4cxx;
-using namespace log4cxx::helpers;
-
 using namespace std::placeholders;
-
-static log4cxx::LoggerPtr log_logger_(log4cxx::Logger::getLogger( "jb." ));
-static int log4cxx_initialized = 0;
 
 /*
 #undef LOG_CIOS_DEBUG_MSG
@@ -81,13 +83,16 @@ static uint64_t          rdma_get_ID = 20000;
  * that we can use to identify where a message will go
  */
 struct na_verbs_addr {
-    na_verbs_addr() : client(static_cast<RdmaClient*>(NULL)), qp_id(0) {}
+    na_verbs_addr() : client(static_cast<RdmaClient*>(NULL)), qp_id(0), self(NA_FALSE) {}
     // A server can identify a client by its queue pair ID
     // this is used in MercuryController to lookup the client object for send/recv ops
     // a value of 0 indicates this is not the server, so use the client object instead
     uint32_t      qp_id;
     // A client is only connected to one server so just hold onto this object
     RdmaClientPtr client;
+    // self flag, true if this address is local, false if remote
+    na_bool_t     self;
+
 };
 
 typedef std::map<uint64_t,na_verbs_op_id*> OperationMap;
@@ -312,9 +317,9 @@ static const na_class_t na_verbs_class_g = {
     NULL,                                   /* context_destroy */
     na_verbs_addr_lookup,                   /* addr_lookup */
     na_verbs_addr_free,                     /* addr_free */
-    NULL, // na_verbs_addr_self,            /* addr_self */
+    na_verbs_addr_self,                     /* addr_self */
     NULL,                                   /* addr_dup */
-    NULL, // na_verbs_addr_is_self,         /* addr_is_self */
+    na_verbs_addr_is_self,                  /* addr_is_self */
     na_verbs_addr_to_string,                /* addr_to_string */
     na_verbs_msg_get_max_expected_size,     /* msg_get_max_expected_size */
     na_verbs_msg_get_max_unexpected_size,   /* msg_get_max_expected_size */
@@ -471,8 +476,6 @@ na_verbs_initialize(const struct na_info *na_info, na_bool_t listen)
 
   }
   else {
-    // @todo : remove this when finished debugging
-    sleep(1);
     // on the client, we don't do anything for now
     LOG_INFO_MSG("Client init - no action for now");
   }
@@ -696,7 +699,6 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
   // Only the client ever connects to the server, so store the na_addr
   // details here. qp_id is zero as we are a client not the server
   //
-  na_verbs_addr->qp_id = 0;
   LOG_DEBUG_MSG("(client) filling na_addr ");
   na_verbs_addr->client = pd->client;
   // and store this info in the op_id as well
@@ -724,6 +726,7 @@ na_verbs_addr_free(na_class_t NA_UNUSED *na_class, na_addr_t addr)
       // remove the client smart pointer reference and trigger the destructor
       na_verbs_addr->client.reset(static_cast<RdmaClient*>(NULL));
     }
+    delete na_verbs_addr;
   }
   //
   na_return_t ret = NA_SUCCESS;
@@ -746,12 +749,12 @@ static na_return_t na_verbs_addr_self(na_class_t NA_UNUSED *na_class,
     goto done;
   }
 
-  na_verbs_addr->qp_id = 0;
+  na_verbs_addr->self  = NA_TRUE;
   *addr = (na_addr_t) na_verbs_addr;
 
 done:
   if (ret != NA_SUCCESS) {
-    delete (na_verbs_addr);
+    delete na_verbs_addr;
   }
   FUNC_END_DEBUG_MSG
   return ret;
@@ -766,8 +769,7 @@ na_verbs_addr_is_self(na_class_t NA_UNUSED *na_class, na_addr_t addr)
     struct na_verbs_addr *na_verbs_addr = (struct na_verbs_addr *) addr;
     FUNC_START_DEBUG_MSG
     FUNC_END_DEBUG_MSG
-
-    return false; // na_verbs_addr->self;
+    return na_verbs_addr->self;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -821,6 +823,12 @@ na_verbs_msg_get_maximum_tag(na_class_t NA_UNUSED *na_class)
 }
 
 /*---------------------------------------------------------------------------*/
+template<typename T>
+struct NullDeleter {
+  void operator()(T*) {}
+};
+
+/*---------------------------------------------------------------------------*/
 static na_return_t na_verbs_msg_send(
     na_class_t    *na_class,
     na_context_t  *context,
@@ -844,7 +852,8 @@ static na_return_t na_verbs_msg_send(
   // we must be careful, the registered memory region must not go out of scope
   // until the send completes, so we must store the object outside of this function
   CSCS_user_message::UserRDMA_message *msg;
-  RdmaClientPtr                        dest;
+  RdmaClientPtr                        client;
+  RdmaMemoryRegion                    *region;
 
   // Allocate op_id
   na_verbs_op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
@@ -867,21 +876,23 @@ static na_return_t na_verbs_msg_send(
   if (expected_flag==CSCS_user_message::UnexpectedMessage) {
     // TBD
   }
-  // not using these, but will when we switch to a direct bufer->buffer transfer
+  // not using these, but will when we switch to a direct buffer->buffer transfer
   if (pd->server) {
     if (!na_verbs_addr) throw std::runtime_error("Destination of send was not valid");
-    dest = pd->controller->getClient(na_verbs_addr->qp_id);
+    client = pd->controller->getClient(na_verbs_addr->qp_id);
+    region = client->getFreeRegion(pd->controller->getProtectionDomain());
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->controller->getProtectionDomain(), buf, buf_size));
   }
   else{
-    dest = pd->client;
+    client = pd->client;
+    region = client->getFreeRegion();
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->domain, buf, buf_size));
   }
 
   //
   // use a standard bgcios message structure, copying our buffer into it
   //
-  msg = (CSCS_user_message::UserRDMA_message *)dest->getOutboundMessagePtr();
+  msg = (CSCS_user_message::UserRDMA_message *)region->getAddress();
   initHeader(&msg->header);
   msg->header.service    = bgcios::SysioUserService;
   msg->header.length     = bgcios::ImmediateMessageSize;  // Amount of data in message (including this header).
@@ -895,9 +906,9 @@ static na_return_t na_verbs_msg_send(
   // still adding the wr_id to it, we lock just before we issue the request and release
   // after we have added the wr_id to the map
   {
-    std::cout << "Locking 1 Mutex "  << std::this_thread::get_id() << std::endl;
-    std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
-    na_verbs_op_id->wr_id = dest->postSendMsgSignaled(bgcios::ImmediateMessageSize); // , tag);
+    na_verbs_op_id->wr_id = (uint64_t)region;
+    std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+    client->postSend(temp,true); // wr_id is region address
     na_verbs_op_id->info.send.wr_id = na_verbs_op_id->wr_id;
     LOG_DEBUG_MSG("SEND has TAG value " << tag);
 
@@ -922,7 +933,6 @@ static na_return_t na_verbs_msg_send(
     (*pd->WorkRequestCompletionMap)[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for send added to WR completion map " << na_verbs_op_id->wr_id << " Entries " <<  (*pd->WorkRequestCompletionMap).size());
   }
-  std::cout << "UN-1-Locking Mutext " << std::endl;
   // Assign op_id
   *out_opid = (na_op_id_t) na_verbs_op_id;
 
@@ -999,7 +1009,7 @@ static na_return_t na_verbs_msg_recv(
   // we must be careful, the registered memory region must not go out of scope
   // until the send completes, so we must store the message/object outside of this function
   CSCS_user_message::UserRDMA_message *msg;
-  RdmaClientPtr                        dest;
+  RdmaClientPtr                        client;
 
   struct verbs_expected_info *expected_info = NULL;
 
@@ -1029,20 +1039,20 @@ static na_return_t na_verbs_msg_recv(
   // not using these, but will when we switch to a direct buffer->buffer transfer
   if (pd->server) {
     if (na_verbs_addr) {
-      dest = pd->controller->getClient(na_verbs_addr->qp_id);
-      if (dest==NULL) {
+      client = pd->controller->getClient(na_verbs_addr->qp_id);
+      if (client==NULL) {
         printf("dest is NULL but qp->id is %d\n\n",na_verbs_addr->qp_id);
       }
     }
     else {
-      printf("Received a null address in receive\n\n");
+      printf("Received a null address in receive\n");
     }
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->controller->getProtectionDomain(), buf, buf_size));
   }
   else{
-    dest = pd->client;
-    if (dest==NULL) {
-      printf("dest is NULL but we should be client \n\n");
+    client = pd->client;
+    if (client==NULL) {
+      printf("client is NULL but we should be client \n\n");
     }
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->domain, buf, buf_size));
   }
@@ -1051,7 +1061,7 @@ static na_return_t na_verbs_msg_recv(
   //
   {
     if (expected_flag==CSCS_user_message::UnexpectedMessage) {
-      if (dest!=NULL) {
+      if (client!=NULL) {
         LOG_DEBUG_MSG("Surprise! we didn't expect this");
         throw std::runtime_error("Nobody expects the Spanish Inquisition!");
       }
@@ -1069,13 +1079,15 @@ static na_return_t na_verbs_msg_recv(
 
       // make sure all clients have a pre-posted receive in their queues
       pd->controller->for_each_client(
-        [](MercuryController::ClientMapPair client) {
-          if (client.second->getNumWaitingRecv()==0) {
-            LOG_DEBUG_MSG("Posting a receive to client with qp_id " << client.second->getQpNum());
-            client.second->postRecvMessage();
+        [pd](MercuryController::ClientMapPair _client) {
+          if (_client.second->getNumWaitingRecv()==0) {
+            LOG_DEBUG_MSG("Posting a receive to client with qp_id " << _client.second->getQpNum());
+            RdmaMemoryRegion* region = _client.second->getFreeRegion(pd->controller->getProtectionDomain());
+            std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+            _client.second->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
           }
           else {
-            LOG_DEBUG_MSG("Already waiting client with qp_id " << client.second->getQpNum());
+            LOG_DEBUG_MSG("Already waiting client with qp_id " << _client.second->getQpNum());
           }
         }
       );
@@ -1083,12 +1095,21 @@ static na_return_t na_verbs_msg_recv(
       pd->UnexpectedOps->push_back(na_verbs_op_id);
     }
     else {
+      if (client==NULL) {
+        LOG_ERROR_MSG("Cannot post an expected message with no client");
+      }
       LOG_DEBUG_MSG("RECV (ExpectedMessage) TAG value " << tag);
-      dest->postRecvMessage();
-      na_verbs_op_id->wr_id = dest->getLastPostRecvKey();
 
-      std::cout << "Locking 2c Mutex " << std::endl;
+      RdmaMemoryRegion* region;
+      if (pd->server) {
+        region = client->getFreeRegion(pd->controller->getProtectionDomain());
+      }
+      else {
+        region = client->getFreeRegion();
+      }
       std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
+      std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+      na_verbs_op_id->wr_id = client->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
       //
       // add wr_id to our map for checking on completions later
       //
@@ -1097,7 +1118,6 @@ static na_return_t na_verbs_msg_recv(
     }
 
   }
-  std::cout << "UN-2-Locking Mutex " << std::endl;
 
 /*
 
@@ -1350,7 +1370,6 @@ na_verbs_put(
   LOG_DEBUG_MSG("Mem local  Handle : address " << local->address << " length " << local->bytes << " key " << local->memkey);
   LOG_DEBUG_MSG("Mem remote Handle : address " << remote->address << " length " << remote->bytes << " key " << remote->memkey);
   {
-    std::cout << "Locking 3 Mutex " << std::endl;
     std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
     client->postRdmaWrite(rdma_put_ID,
         remote->memkey, (uint64_t)remote->address + remote_offset,
@@ -1430,7 +1449,6 @@ na_verbs_get(
   LOG_DEBUG_MSG("Mem local  Handle : address " << local->address << " length " << local->bytes << " key " << local->memkey);
   LOG_DEBUG_MSG("Mem remote Handle : address " << remote->address << " length " << remote->bytes << " key " << remote->memkey);
   {
-    std::cout << "Locking 4 Mutex " << std::endl;
     std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
 
     client->postRdmaRead(rdma_get_ID,
@@ -1461,7 +1479,6 @@ na_verbs_get(
     (*pd->WorkRequestCompletionMap)[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for get added to WR completion map " << na_verbs_op_id->wr_id << " Entries " <<  (*pd->WorkRequestCompletionMap).size());
   }
-  std::cout << "UN-4-Locking Mutex " << std::endl;
 
   // Assign op_id
   *out_opid = (na_op_id_t) na_verbs_op_id;
@@ -1731,14 +1748,12 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     return NA_PROTOCOL_ERROR;
   }
 
-  std::cout << "Locking 5 Mutex " << std::endl;
   std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
   //
   switch (completion->opcode)
   {
     case IBV_WC_SEND:
     {
-      printf("1 IBV_WC_SEND\n");
       LOG_CIOS_TRACE_MSG("send operation completed successfully for queue pair " << completion->qp_num);
       wc_q = 1;
       break;
@@ -1746,7 +1761,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 
     case IBV_WC_RECV:
     {
-      printf("2 IBV_WC_RECV\n");
       LOG_CIOS_TRACE_MSG("receive operation completed successfully for queue pair " << completion->qp_num << " (received " << completion->byte_len << " bytes)");
 
       // decrement the counter we're tracking
@@ -1754,7 +1768,8 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
 
       // Handle the message.
-      bgcios::MessageHeader            *msghdr = (bgcios::MessageHeader *)client->getInboundMessagePtr();
+      RdmaMemoryRegion *region = (RdmaMemoryRegion *)completion->wr_id;
+      bgcios::MessageHeader            *msghdr = (bgcios::MessageHeader *)region->getAddress();
       CSCS_user_message::UserRDMA_message *msg = (CSCS_user_message::UserRDMA_message *)(msghdr);
       na_verbs_op_id                    *op_id = NULL;
       struct na_verbs_addr      *na_verbs_addr = NULL;
@@ -1810,7 +1825,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
               wc_q = 0;
             }
             else {
-              printf("Did not find completion %d, throwing exception instead\n\n",completion->wr_id);
+              printf("Did not find completion %llu, throwing exception instead\n",completion->wr_id);
               throw std::runtime_error("Failed to find verbs op_id in completion list");
             }
           }
@@ -1851,7 +1866,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 
     case IBV_WC_RDMA_READ:
     {
-      printf("3 IBV_WC_RDMA_READ\n");
       LOG_CIOS_DEBUG_MSG("rdma read operation completed successfully for queue pair " << completion->qp_num);
       wc_q = 1;
       break;
@@ -1859,7 +1873,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 
     case IBV_WC_RDMA_WRITE:
     {
-      printf("4 IBV_WC_RDMA_WRITE\n");
       LOG_CIOS_DEBUG_MSG("rdma write operation completed successfully for queue pair " << completion->qp_num);
       wc_q = 1;
       break;
@@ -1867,7 +1880,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 
     default:
     {
-      printf("5 default\n");
       LOG_ERROR_MSG("unsupported operation " << completion->opcode << " in work completion");
       break;
     }
@@ -1884,7 +1896,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     // do not call completion because mercury has not yet given this message an ID
   }
   FUNC_END_DEBUG_MSG
-  std::cout << "UN-5-Locking Mutex " << std::endl;
   return ret;
 }
 /*---------------------------------------------------------------------------*/

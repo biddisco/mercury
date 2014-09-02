@@ -25,6 +25,9 @@
 //! \brief Methods for bgcios::stdio::MercuryController class.
 
 // Includes
+#include "utility/include/Log.h"
+//LOG_DECLARE_FILE("jb.");
+
 #include "MercuryController.h"
 #include <ramdisk/include/services/common/RdmaError.h>
 #include <ramdisk/include/services/common/RdmaDevice.h>
@@ -44,8 +47,6 @@
 
 using namespace bgcios::stdio;
 
-LOG_DECLARE_FILE("jb");
-
 /*
 #undef LOG_CIOS_DEBUG_MSG
 #undef LOG_DEBUG_MSG
@@ -61,12 +62,11 @@ MercuryController::MercuryController(const char *device, const char *interface, 
   this->_interface = interface;
   this->_port = port;
  }
+
 /*---------------------------------------------------------------------------*/
 MercuryController::~MercuryController()
 {
   LOG_CIOS_DEBUG_MSG("MercuryController destructor clearing clients");
-  _dequeUnexpectedInClient.clear();
-  _dequeExpectedInClient.clear();
   _clients.clear();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor closing server");
   this->_rdmaListener.reset();
@@ -191,9 +191,6 @@ void MercuryController::eventMonitor(int Nevents)
   // Process events until told to stop - or timeout.
   while (!_done)
   {
-    pollInfo[eventChannel].revents = 0;
-    pollInfo[compChannel].revents = 0;
-
     // Wait for an event on one of the descriptors.
     int rc = poll(pollInfo, numFds, polltimeout);
 
@@ -204,7 +201,6 @@ void MercuryController::eventMonitor(int Nevents)
       // otherwise, leave
       else break;
     }
-    LOG_CIOS_TRACE_MSG("A channel has received an event/message " << std::this_thread::get_id() );
 
     // There was an error so log the failure and try again.
     if (rc == -1)
@@ -219,15 +215,6 @@ void MercuryController::eventMonitor(int Nevents)
       return;
     }
 
-    // Check for an event on the event channel.
-    if (pollInfo[eventChannel].revents & POLLIN)
-    {
-      LOG_CIOS_TRACE_MSG("input event available on event channel");
-      eventChannelHandler();
-      pollInfo[eventChannel].revents = 0;
-      Nevents--;
-    }
-
     // Check for an event on the completion channel.
     if (pollInfo[compChannel].revents & POLLIN)
     {
@@ -236,13 +223,26 @@ void MercuryController::eventMonitor(int Nevents)
       pollInfo[compChannel].revents = 0;
       Nevents--;
     }
-
-    if (Nevents<=0)
+    // Check for an event on the event channel.
+    else if (pollInfo[eventChannel].revents & POLLIN)
     {
+      LOG_CIOS_TRACE_MSG("input event available on event channel");
+      eventChannelHandler();
+      pollInfo[eventChannel].revents = 0;
+      Nevents--;
+    }
+
+    if (Nevents<=0) {
       _done = true;
     }
   }
 }
+/*---------------------------------------------------------------------------*/
+template<typename T>
+struct NullDeleter {
+  void operator()(T*) {}
+};
+
 
 /*---------------------------------------------------------------------------*/
 void MercuryController::eventChannelHandler(void)
@@ -293,10 +293,12 @@ void MercuryController::eventChannelHandler(void)
          _completionChannel->addCompletionQ(completionQ);
 
          // Post a receive to get the first message.
-         client->postRecvMessage();
-         // we need the wr_id that the request corresponds to
-         std::pair<uint32_t,uint64_t> temp = std::make_pair(client->getQpNum(), client->getLastPostRecvKey());
-         LOG_DEBUG_MSG("New connection Pre-posted an unexpected receive with wr_id " << temp.second);
+         RdmaMemoryRegion *region = client->getFreeRegion(this->_protectionDomain);
+         std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+
+//         LOG_DEBUG_MESSAGE("Posting a receive using region wr_id " << (uint64_t)(region) );
+
+         client->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
 
          // Accept the connection from the new client.
          err = client->accept();
@@ -331,6 +333,11 @@ void MercuryController::eventChannelHandler(void)
          uint32_t qp = _rdmaListener->getEventQpNum();
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
+         // we must not disconnect if there are outstanding work requests
+         if (client->getNumWaitingRecv() || client->getNumWaitingSend()) {
+           LOG_ERROR_MSG("@@@ ERROR there are uncompleted events to be handled before disconnection");
+         }
+
          // Complete disconnect initiated by peer.
          err = client->disconnect(false);
          if (err == 0) {
@@ -378,15 +385,6 @@ void MercuryController::eventChannelHandler(void)
 /*---------------------------------------------------------------------------*/
 bool MercuryController::completionChannelHandler(uint64_t requestId)
 {
-  bool rc = false;
-  uint64_t* ptr;
-  uint32_t rdma_rkey;
-  uint32_t rdma_len;
-  uint64_t rdma_addr;
-  uint32_t rdma_err;
-  char     *Message_text;
-  char     *Data_text;
-  ErrorAckMessage *outMsg;
   RdmaClientPtr client;
   try {
     // Get the notification event from the completion channel.
@@ -402,105 +400,16 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
       client = _clients.get(completion->qp_num);
 
       if (this->_completionFunction) {
-        printf("* * * Calling completion function\n\n");
         this->_completionFunction(completion, client);
-        printf("* * * Finished Calling completion function\n\n");
       }
     }
-    printf("finished completionChannelHandler\n");
   }
 
   catch (const RdmaError& e) {
     LOG_ERROR_MSG("error removing work completions from completion queue: " << bgcios::errorString(e.errcode()));
   }
 
-  return rc;
-}
-
-/*---------------------------------------------------------------------------*/
-bool MercuryController::addUnexpectedMsg(const RdmaClientPtr & client, uint32_t qp_id)
-{
-  // Get pointer to inbound WriteStdio message.
-  CSCS_user_message::UserRDMA_message *inMsg = (CSCS_user_message::UserRDMA_message *)client->getInboundMessagePtr();
-
-  /*
-   // Build WriteStdioAck message in outbound message region.
-   WriteStdioAckMessage *outMsg = (WriteStdioAckMessage *)client->getOutboundMessagePtr();
-   memcpy(&(outMsg->header), &(inMsg->header), sizeof(MessageHeader));
-   outMsg->header.type = inMsg->header.type == WriteStdout ? WriteStdoutAck : WriteStderrAck;
-   outMsg->header.length = sizeof(WriteStdioAckMessage);
-   client->setOutboundMessageLength(outMsg->header.length);
-   */
-  // Validate the job id.
-  //   const JobPtr& job = _jobs.get(inMsg->header.jobId);
-
-  _dequeUnexpectedInClient.push_back(ClientMapPair(qp_id,client));
   return true;
 }
 
-/*---------------------------------------------------------------------------*/
-bool MercuryController::addExpectedMsg(const RdmaClientPtr & client, uint32_t qp_id)
-{
-  // Get pointer to inbound WriteStdio message.
-  CSCS_user_message::UserRDMA_message *inMsg = (CSCS_user_message::UserRDMA_message *)client->getInboundMessagePtr();
-
-  /*
-   // Build WriteStdioAck message in outbound message region.
-   WriteStdioAckMessage *outMsg = (WriteStdioAckMessage *)client->getOutboundMessagePtr();
-   memcpy(&(outMsg->header), &(inMsg->header), sizeof(MessageHeader));
-   outMsg->header.type = inMsg->header.type == WriteStdout ? WriteStdoutAck : WriteStderrAck;
-   outMsg->header.length = sizeof(WriteStdioAckMessage);
-   client->setOutboundMessageLength(outMsg->header.length);
-   */
-  // Validate the job id.
-  //   const JobPtr& job = _jobs.get(inMsg->header.jobId);
-
-  _dequeExpectedInClient.push_back(ClientMapPair(qp_id,client));
-  return true;
-}
-
-/*---------------------------------------------------------------------------*/
-bool MercuryController::fetchUnexpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id)
-{
-  RdmaClientPtr client;
-  if (!_dequeUnexpectedInClient.empty() )
-  {
-    client = _dequeUnexpectedInClient.front().second;
-    qp_id = _dequeUnexpectedInClient.front().first;
-    _dequeUnexpectedInClient.pop_front();
-  }
-  else
-  {
-    throw std::runtime_error("Nothing to receive in unexpected queue");
-    return false;
-  }
-  CSCS_user_message::UserRDMA_message *inMsg = (CSCS_user_message::UserRDMA_message *)client->getInboundMessagePtr();
-//  if (buf_size>inMsg->header2.cnk_bytes) throw std::runtime_error("Not enough space for message in UserRDMA msg");
-  //
-//  memcpy(buf, inMsg->MessageData, inMsg->header2.cnk_bytes);
-
-  return true;
-}
-
-/*---------------------------------------------------------------------------*/
-bool MercuryController::fetchExpectedMsg(void *buf, uint64_t buf_size, uint32_t &qp_id)
-{
-  RdmaClientPtr client;
-  if (!_dequeExpectedInClient.empty() )
-  {
-    client = _dequeExpectedInClient.front().second;
-    qp_id = _dequeExpectedInClient.front().first;
-    _dequeExpectedInClient.pop_front();
-  }
-  else
-  {
-    return false;
-  }
-  CSCS_user_message::UserRDMA_message *inMsg = (CSCS_user_message::UserRDMA_message *)client->getInboundMessagePtr();
-//  if (buf_size>inMsg->header2.cnk_bytes) throw std::runtime_error("Not enough space for message in UserRDMA msg");
-  //
-//  memcpy(buf, inMsg->MessageData, inMsg->header2.cnk_bytes);
-
-  return true;
-}
 

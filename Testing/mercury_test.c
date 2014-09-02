@@ -72,6 +72,7 @@ hg_test_finalize_rpc(void)
     hg_return_t hg_ret;
     hg_request_t request;
     hg_status_t status;
+    printf("htf rpc 1\n");
 
     /* Forward call to remote addr and get a new request */
     hg_ret = HG_Forward(hg_test_addr_g, hg_test_finalize_id_g, NULL, NULL,
@@ -79,6 +80,7 @@ hg_test_finalize_rpc(void)
     if (hg_ret != HG_SUCCESS) {
         fprintf(stderr, "Could not forward call\n");
     }
+    printf("htf rpc 2\n");
 
     /* Wait for call to be executed and return value to be sent back
      * (Request is freed when the call completes)
@@ -90,6 +92,7 @@ hg_test_finalize_rpc(void)
     if (!status) {
         fprintf(stderr, "Operation did not complete\n");
     }
+    printf("htf rpc 3\n");
 
     /* Free request */
     hg_ret = HG_Request_free(request);
@@ -251,11 +254,14 @@ HG_Test_finalize(void)
     hg_return_t ret = HG_SUCCESS;
     na_return_t na_ret;
 
+    printf("htf 1\n");
     NA_Test_barrier();
+    printf("htf 2\n");
 
     if (hg_test_is_client_g) {
         /* Terminate server */
         if (hg_test_rank_g == 0) hg_test_finalize_rpc();
+        printf("htf 3\n");
 
         /* Free addr id */
         na_ret = NA_Addr_free(hg_test_na_class_g, hg_test_addr_g);
@@ -265,17 +271,20 @@ HG_Test_finalize(void)
         }
         hg_test_addr_g = NA_ADDR_NULL;
     }
+    printf("htf 4\n");
 
 #ifdef MERCURY_TESTING_HAS_THREAD_POOL
         hg_thread_pool_destroy(hg_test_thread_pool_g);
 #endif
-
+printf("about to call finalize\n");
     /* Finalize interface */
+printf("htf 5\n");
     ret = HG_Finalize();
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "Could not finalize Mercury\n");
         goto done;
     }
+    printf("htf 6\n");
 
     na_ret = NA_Test_finalize(hg_test_na_class_g);
     if (na_ret != NA_SUCCESS) {
@@ -283,6 +292,7 @@ HG_Test_finalize(void)
         goto done;
     }
     hg_test_na_class_g = NULL;
+    printf("htf 7\n");
 
 done:
      return ret;

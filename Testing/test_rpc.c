@@ -46,10 +46,12 @@ int main(int argc, char *argv[])
     printf("Forwarding rpc_open, op id: %u...\n", hg_test_rpc_open_id_g);
     hg_ret = HG_Forward(addr, hg_test_rpc_open_id_g, &rpc_open_in_struct,
             &rpc_open_out_struct, &rpc_open_request);
+    printf("Forwarding rpc_open 2, op id: %u...\n", hg_test_rpc_open_id_g);
     if (hg_ret != HG_SUCCESS) {
         fprintf(stderr, "Could not forward call\n");
         return EXIT_FAILURE;
     }
+    printf("Forwarding rpc_open 3, op id: %u...\n", hg_test_rpc_open_id_g);
 
     /* Wait for call to be executed and return value to be sent back
      * (Request is freed when the call completes)
@@ -71,15 +73,18 @@ int main(int argc, char *argv[])
     rpc_open_event_id = rpc_open_out_struct.event_id;
     printf("rpc_open returned: %d with event_id: %d\n", rpc_open_ret,
             rpc_open_event_id);
-
-    /* Free request */
+sleep(1);
+printf("done sleep\n");
+/* Free request */
     hg_ret = HG_Request_free(rpc_open_request);
     if (hg_ret != HG_SUCCESS) {
         fprintf(stderr, "Could not free request\n");
         return EXIT_FAILURE;
     }
 
+    printf("done sleep 1.5\n");
     HG_Test_finalize();
+    printf("done sleep 2\n");
 
     return EXIT_SUCCESS;
 }

@@ -44,7 +44,7 @@ set(MERCURY_EXT_LIB_DEPENDENCIES ${NA_EXT_LIB_DEPENDENCIES}
 # Boost (for preprocessor macros)
 option(MERCURY_USE_BOOST_PP "Use BOOST preprocessor macros." OFF)
 if(MERCURY_USE_BOOST_PP)
-  find_package(Boost 1.41.0 REQUIRED)
+  find_package(Boost 1.54 REQUIRED)
   if(Boost_FOUND)
     message(STATUS "Boost include directory: ${Boost_INCLUDE_DIRS}")
     set(HG_HAS_BOOST 1)
@@ -191,14 +191,16 @@ install(
 #-----------------------------------------------------------------------------
 # Add Target(s) to CMake Install for import into other projects
 #-----------------------------------------------------------------------------
-install(
-  EXPORT
-    ${MERCURY_EXPORTED_TARGETS}
-  DESTINATION
-    ${MERCURY_INSTALL_DATA_DIR}/cmake/mercury
-  FILE
-    ${MERCURY_EXPORTED_TARGETS}.cmake
-)
+if(NOT MERCURY_EXTERNALLY_CONFIGURED)
+  install(
+    EXPORT
+      ${MERCURY_EXPORTED_TARGETS}
+    DESTINATION
+      ${MERCURY_INSTALL_DATA_DIR}/cmake/mercury
+    FILE
+      ${MERCURY_EXPORTED_TARGETS}.cmake
+  )
+endif()
 
 #-----------------------------------------------------------------------------
 # Export all exported targets to the build tree for use by parent project
