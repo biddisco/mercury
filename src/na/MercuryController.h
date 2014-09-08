@@ -27,19 +27,9 @@
 #ifndef STDIO_HWSTDIOCONTROLLER_H
 #define STDIO_HWSTDIOCONTROLLER_H
 
-#ifndef NA_VERBS_USE_LOG4CXX
- #define DISABLE_LOGGING
- #define LOG_CIOS_DEBUG_DISABLE
- #define LOG_CIOS_TRACE_DISABLE
- #define LOG_CIOS_INFO_DISABLE
- #define LOG_CIOS_WARN_DISABLE
- #undef LOG_CIOS_DEBUG_MSG
-#else
-//  #include "utility/include/Log.h"
-//  LOG_DECLARE_FILE( "jb" );
-#endif
-
-// Includes
+#include "rdmahelper_defines.h"
+#include "rdmahelper_logging.h"
+//
 #include <ramdisk/include/services/common/PointerMap.h>
 #include <ramdisk/include/services/common/RdmaCompletionChannel.h>
 #include <ramdisk/include/services/common/RdmaClient.h>
@@ -144,6 +134,8 @@ private:
 
    //! Large memory region for transferring data (used for both inbound and outbound data).
    bgcios::RdmaMemoryRegionPtr _largeRegion;
+
+   RdmaRegisteredMemoryPoolPtr _memoryPool;
 
    //! \brief  Transfer data to the client from the large memory region.
    //! \param  address Address of remote memory region.
