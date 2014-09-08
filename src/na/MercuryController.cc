@@ -24,15 +24,10 @@
 //! \file  MercuryController.cc
 //! \brief Methods for bgcios::stdio::MercuryController class.
 
-// Includes
-#include "utility/include/Log.h"
-//LOG_DECLARE_FILE("jb.");
-
 #include "MercuryController.h"
 #include <ramdisk/include/services/common/RdmaError.h>
 #include <ramdisk/include/services/common/RdmaDevice.h>
 #include <ramdisk/include/services/common/RdmaCompletionQueue.h>
-#include <ramdisk/include/services/common/logging.h>
 #include <ramdisk/include/services/MessageUtility.h>
 #include <ramdisk/include/services/ServicesConstants.h>
 #include <poll.h>
@@ -70,9 +65,13 @@ MercuryController::~MercuryController()
   _clients.clear();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor closing server");
   this->_rdmaListener.reset();
-  LOG_CIOS_DEBUG_MSG("MercuryController destructor closing regions");
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor freeing regions");
   this->_largeRegion.reset();
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor freeing memory pool");
+  this->_memoryPool.reset();
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor releaseing protection domain");
   this->_protectionDomain.reset();
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor deleting completion channel");
   this->_completionChannel.reset();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor done");
 }
@@ -141,6 +140,9 @@ int MercuryController::startup()
       return e.errcode();
    }
    LOG_CIOS_DEBUG_MSG("created completion channel using fd " << _completionChannel->getChannelFd());
+
+   // Create a memory pool for pinned buffers
+   _memoryPool = std::make_shared<RdmaRegisteredMemoryPool>(_protectionDomain, 32, 32);
 
    // Listen for connections.
    int err = _rdmaListener->listen(256);
@@ -277,7 +279,7 @@ void MercuryController::eventChannelHandler(void)
          // Construct a new RdmaClient object for the new client.
          RdmaClientPtr client;
          try {
-             client = RdmaClientPtr(new RdmaClient(_rdmaListener->getEventId(), _protectionDomain, completionQ));
+           client = std::make_shared<RdmaClient>(_rdmaListener->getEventId(), _protectionDomain, completionQ, _memoryPool);
          }
          catch (bgcios::RdmaError& e) {
            LOG_ERROR_MSG("error creating rdma client: %s\n" << e.what());
@@ -293,7 +295,7 @@ void MercuryController::eventChannelHandler(void)
          _completionChannel->addCompletionQ(completionQ);
 
          // Post a receive to get the first message.
-         RdmaMemoryRegion *region = client->getFreeRegion(this->_protectionDomain);
+         RdmaMemoryRegion *region = client->getFreeRegion();
          std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
 
 //         LOG_DEBUG_MESSAGE("Posting a receive using region wr_id " << (uint64_t)(region) );
@@ -334,9 +336,11 @@ void MercuryController::eventChannelHandler(void)
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
          // we must not disconnect if there are outstanding work requests
-         if (client->getNumWaitingRecv() || client->getNumWaitingSend()) {
-           LOG_ERROR_MSG("@@@ ERROR there are uncompleted events to be handled before disconnection");
+         while (client->getNumWaitingRecv()>0 || client->getNumWaitingSend()>0) {
+           LOG_ERROR_MSG("@@@ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingRecv() << " NumWaitingSend " << client->getNumWaitingSend());
+           this->eventMonitor(1);
          }
+         LOG_ERROR_MSG("@@@ CLEAR uncompleted events handled before disconnection");
 
          // Complete disconnect initiated by peer.
          err = client->disconnect(false);

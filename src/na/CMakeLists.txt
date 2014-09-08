@@ -82,13 +82,6 @@ if(NA_USE_VERBS)
   find_package(Boost 1.48.0 REQUIRED regex)
   find_package(rdmahelper)
 
-  option(NA_VERBS_USE_LOG4CXX "Use Log4Cxx library for debug messages." OFF)
-  if(NA_VERBS_USE_LOG4CXX)
-    add_definitions(-DNA_VERBS_USE_LOG4CXX)
-  endif()
-
-  add_definitions(${rdmahelper_DEFINITIONS})
-
   if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
     set(NA_PLUGINS ${NA_PLUGINS} verbs)
     set(NA_HAS_VERBS 1)
@@ -112,6 +105,7 @@ if(NA_USE_VERBS)
       ${NA_EXT_INCLUDE_DEPENDENCIES}
       ${BGC_INCLUDE_DIR}
     )
+    add_definitions(${rdmahelper_DEFINITIONS})
 
     set(VERBS_DEVICE_NAME "roq" CACHE STRING "Infiniband device name to use")
     set(VERBS_INTERFACE_NAME "roq0" CACHE STRING "Infiniband interface name to use")

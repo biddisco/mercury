@@ -23,14 +23,6 @@
 #include "na_private.h"
 #include "na_error.h"
 
-#ifndef NA_VERBS_USE_LOG4CXX
- #define DISABLE_LOGGING
- #define LOG_CIOS_DEBUG_DISABLE
- #define LOG_CIOS_TRACE_DISABLE
- #define LOG_CIOS_INFO_DISABLE
- #define LOG_CIOS_WARN_DISABLE
-#endif
-
 #include "mercury_hash_table.h"
 #include "mercury_list.h"
 #include "mercury_queue.h"

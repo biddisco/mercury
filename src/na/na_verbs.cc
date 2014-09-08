@@ -18,20 +18,23 @@ extern "C" {
 #include <string.h>
 #include <poll.h>
 
-#include"utility/include/Log.h"
-
-using namespace log4cxx;
-using namespace log4cxx::helpers;
-
-//static log4cxx::LoggerPtr log_logger_(log4cxx::Logger::getLogger( "jb." ));
-static int log4cxx_initialized = 0;
-
-//LOG_DECLARE_FILE("jb");
-
 #include "MercuryController.h"
+
+#if RDMAHELPER_LOG4CXX_LOGGING
+  using namespace log4cxx;
+  using namespace log4cxx::helpers;
+
+  //static log4cxx::LoggerPtr log_logger_(log4cxx::Logger::getLogger( "jb." ));
+  static int log4cxx_initialized = 0;
+
+  //LOG_DECLARE_FILE("jb");
+  #include "log4cxx/basicconfigurator.h"
+  #include <log4cxx/fileappender.h>
+  #include <log4cxx/simplelayout.h>
+#endif
+
 #include <ramdisk/include/services/common/RdmaClient.h>
 #include <ramdisk/include/services/common/RdmaDevice.h>
-#include <ramdisk/include/services/common/logging.h>
 #include <ramdisk/include/services/common/RdmaError.h>
 #include <ramdisk/include/services/common/RdmaCompletionQueue.h>
 #include <ramdisk/include/services/MessageUtility.h>
@@ -41,10 +44,6 @@ static int log4cxx_initialized = 0;
 #include <boost/lexical_cast.hpp>
 #include <boost/throw_exception.hpp>
 #include <boost/tokenizer.hpp>
-
-#include "log4cxx/basicconfigurator.h"
-#include <log4cxx/fileappender.h>
-#include <log4cxx/simplelayout.h>
 
 #include <thread>
 #include <mutex>
@@ -353,6 +352,7 @@ extern "C" {
 };
 
 /*---------------------------------------------------------------------------*/
+#if RDMAHELPER_LOG4CXX_LOGGING
 void init_log4cxx()
 {
   if (log4cxx_initialized) return;
@@ -363,7 +363,9 @@ void init_log4cxx()
   bgcios::setLoggingLevel("jb.", 'D');
   log4cxx_initialized = true;
 }
-
+#else
+void init_log4cxx() {}
+#endif
 /*---------------------------------------------------------------------------*/
 na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel);
 na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel);
@@ -665,6 +667,11 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
           RdmaCompletionQueue::MaxQueueSize,
           pd->completionChannel->getChannel()));
 
+  // Create a memory pool for pinned buffers
+  RdmaRegisteredMemoryPoolPtr _memoryPool = std::make_shared<RdmaRegisteredMemoryPool>(pd->domain, 32, 32);
+  pd->client->setMemoryPoold(_memoryPool);
+
+
   // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
   pd->client->makePeer(pd->domain, pd->completionQ);
@@ -880,7 +887,7 @@ static na_return_t na_verbs_msg_send(
   if (pd->server) {
     if (!na_verbs_addr) throw std::runtime_error("Destination of send was not valid");
     client = pd->controller->getClient(na_verbs_addr->qp_id);
-    region = client->getFreeRegion(pd->controller->getProtectionDomain());
+    region = client->getFreeRegion();
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->controller->getProtectionDomain(), buf, buf_size));
   }
   else{
@@ -908,7 +915,7 @@ static na_return_t na_verbs_msg_send(
   {
     na_verbs_op_id->wr_id = (uint64_t)region;
     std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
-    client->postSend(temp,true); // wr_id is region address
+    client->postSend(temp, true, false, 0); // wr_id is region address
     na_verbs_op_id->info.send.wr_id = na_verbs_op_id->wr_id;
     LOG_DEBUG_MSG("SEND has TAG value " << tag);
 
@@ -1082,7 +1089,7 @@ static na_return_t na_verbs_msg_recv(
         [pd](MercuryController::ClientMapPair _client) {
           if (_client.second->getNumWaitingRecv()==0) {
             LOG_DEBUG_MSG("Posting a receive to client with qp_id " << _client.second->getQpNum());
-            RdmaMemoryRegion* region = _client.second->getFreeRegion(pd->controller->getProtectionDomain());
+            RdmaMemoryRegion* region = _client.second->getFreeRegion();
             std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
             _client.second->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
           }
@@ -1102,7 +1109,7 @@ static na_return_t na_verbs_msg_recv(
 
       RdmaMemoryRegion* region;
       if (pd->server) {
-        region = client->getFreeRegion(pd->controller->getProtectionDomain());
+        region = client->getFreeRegion();
       }
       else {
         region = client->getFreeRegion();
@@ -1755,6 +1762,8 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     case IBV_WC_SEND:
     {
       LOG_CIOS_TRACE_MSG("send operation completed successfully for queue pair " << completion->qp_num);
+      int numRecv = client->decrementWaitingSend();
+      LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
       wc_q = 1;
       break;
     }
