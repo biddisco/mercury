@@ -361,6 +361,7 @@ na_test_get_config(char *addr_name, na_size_t len)
 
     /* Only rank 0 reads file */
     if (na_test_comm_rank_g == 0) {
+        sleep(1); // to allow the server to write out details before we connect
         config = fopen(MERCURY_TESTING_TEMP_DIRECTORY HG_TEST_CONFIG_FILE_NAME,
                 "r");
         if (!config) {
