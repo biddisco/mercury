@@ -104,6 +104,8 @@ public:
    typedef std::function<int(struct ibv_wc *completion, RdmaClientPtr client)> CompletionFunction;
    void setCompletionFunction(CompletionFunction f) { this->_completionFunction = f;}
 
+   void freeRegion(RdmaMemoryRegion *region);
+
 private:
 
    void eventChannelHandler(void);
@@ -135,7 +137,7 @@ private:
    //! Large memory region for transferring data (used for both inbound and outbound data).
    bgcios::RdmaMemoryRegionPtr _largeRegion;
 
-   RdmaRegisteredMemoryPoolPtr _memoryPool;
+   memory_poolPtr _memoryPool;
 
    //! \brief  Transfer data to the client from the large memory region.
    //! \param  address Address of remote memory region.
