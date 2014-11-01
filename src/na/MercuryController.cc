@@ -142,7 +142,7 @@ int MercuryController::startup()
    LOG_CIOS_DEBUG_MSG("created completion channel using fd " << _completionChannel->getChannelFd());
 
    // Create a memory pool for pinned buffers
-   _memoryPool = std::make_shared<RdmaRegisteredMemoryPool>(_protectionDomain, 32, 32);
+   _memoryPool = std::make_shared<memory_pool>(_protectionDomain, 512, 8, 32);
 
    // Listen for connections.
    int err = _rdmaListener->listen(256);
@@ -168,6 +168,17 @@ int MercuryController::startup()
 int MercuryController::cleanup(void)
 {
   return 0;
+}
+
+/*---------------------------------------------------------------------------*/
+void MercuryController::freeRegion(RdmaMemoryRegion *region)
+{
+  LOG_ERROR_MSG("Removed region free code, must replace it");
+//  if(!this->_memoryPool->is_from(region)) {
+//    throw std::runtime_error("Trying to delete a meory region we didn't allocate");
+//  }
+//  LOG_DEBUG_MSG("")
+//  this->_memoryPool->free(region);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -269,7 +280,7 @@ void MercuryController::eventChannelHandler(void)
          // Construct a RdmaCompletionQueue object for the new client.
          RdmaCompletionQueuePtr completionQ;
          try {
-             completionQ = RdmaCompletionQueuePtr(new RdmaCompletionQueue(_rdmaListener->getEventContext(), RdmaCompletionQueue::MaxQueueSize, _completionChannel->getChannel()));
+             completionQ = std::make_shared<RdmaCompletionQueue>(_rdmaListener->getEventContext(), RdmaCompletionQueue::MaxQueueSize, _completionChannel->getChannel());
          }
          catch (bgcios::RdmaError& e) {
             LOG_ERROR_MSG("error creating completion queue: " << e.what());
@@ -295,12 +306,11 @@ void MercuryController::eventChannelHandler(void)
          _completionChannel->addCompletionQ(completionQ);
 
          // Post a receive to get the first message.
-         RdmaMemoryRegion *region = client->getFreeRegion();
-         std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+         RdmaMemoryRegionPtr region = client->getFreeRegion(512);
 
-//         LOG_DEBUG_MESSAGE("Posting a receive using region wr_id " << (uint64_t)(region) );
+         LOG_DEBUG_MSG("Pre-Posting a receive using region wr_id " << std::hex << (uintptr_t)(region.get()) );
 
-         client->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
+         client->postRecvRegionAsID(region, (uint64_t)region->getAddress(), region->getLength());
 
          // Accept the connection from the new client.
          err = client->accept();
@@ -335,12 +345,25 @@ void MercuryController::eventChannelHandler(void)
          uint32_t qp = _rdmaListener->getEventQpNum();
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
-         // we must not disconnect if there are outstanding work requests
          while (client->getNumWaitingRecv()>0 || client->getNumWaitingSend()>0) {
            LOG_ERROR_MSG("@@@ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingRecv() << " NumWaitingSend " << client->getNumWaitingSend());
-           this->eventMonitor(1);
+//           this->eventMonitor(1,false);
+//           LOG_ERROR_MSG("$$$ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingRecv() << " NumWaitingSend " << client->getNumWaitingSend());
+             while (completionQ->removeCompletions() != 0) {
+               LOG_ERROR_MSG("Removed a completion from the queue ");
+             // Get the next work completion.
+               struct ibv_wc *completion = completionQ->popCompletion();
+               LOG_DEBUG_MSG("Removing wr_id " << completion->wr_id);
+              // Find the connection that received the message.
+//              client = _clients.get(completion->qp_num);
+             }
+//              if (this->_completionFunction) {
+//                this->_completionFunction(completion, client);
+//              }
          }
-         LOG_ERROR_MSG("@@@ CLEAR uncompleted events handled before disconnection");
+
+                 // we must not disconnect if there are outstanding work requests
+        LOG_ERROR_MSG("@@@ CLEAR uncompleted events handled before disconnection");
 
          // Complete disconnect initiated by peer.
          err = client->disconnect(false);

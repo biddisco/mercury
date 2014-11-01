@@ -18,7 +18,9 @@ extern "C" {
 #include <string.h>
 #include <poll.h>
 
-#include "MercuryController.h"
+#ifndef RDMAHELPER_BGQ_CNVERBS
+  #include "MercuryController.h"
+#endif
 
 #if RDMAHELPER_LOG4CXX_LOGGING
   using namespace log4cxx;
@@ -63,8 +65,10 @@ using namespace std::placeholders;
 
 #define START_END_DEBUG 1
 #ifdef START_END_DEBUG
-  #define FUNC_START_DEBUG_MSG LOG_DEBUG_MSG("**************** Enter " << __func__ << " ****************");
-  #define FUNC_END_DEBUG_MSG   LOG_DEBUG_MSG("################ Exit  " << __func__ << " ################");
+//  #define FUNC_START_DEBUG_MSG LOG_DEBUG_MSG("**************** Enter " << __func__ << " ****************");
+//  #define FUNC_END_DEBUG_MSG   LOG_DEBUG_MSG("################ Exit  " << __func__ << " ################");
+  #define FUNC_START_DEBUG_MSG std::cout << "**************** Enter " << __func__ << " ****************" << std::endl;
+  #define FUNC_END_DEBUG_MSG   std::cout << "################ Exit  " << __func__ << " ################" << std::endl;
 #else
   #define FUNC_START_DEBUG_MSG
   #define FUNC_END_DEBUG_MSG
@@ -526,6 +530,7 @@ na_verbs_finalize(na_class_t *na_class)
         LOG_DEBUG_MSG("Client Polling before disconnect RC " << pd->ReceiveTagCompletionMap->size() << " WR " << pd->WorkRequestCompletionMap->size());
         poll_cq_non_blocking(pd, pd->completionChannel);
       }
+      sleep(1);
       pd->client->disconnect(true);
       na_return_t val = NA_SUCCESS;
       pd->controller.reset();
@@ -582,7 +587,7 @@ void NA_VERBS_Get_rdma_device_address(const char *devicename, const char *iface,
   LOG_DEBUG_MSG("Generated hostname string " << hostname);
 
   // print device info for debugging
-  //linkDevice->getDeviceInfo(true);
+//  linkDevice->getDeviceInfo(true);
 
   FUNC_END_DEBUG_MSG
 }
@@ -668,9 +673,8 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
           pd->completionChannel->getChannel()));
 
   // Create a memory pool for pinned buffers
-  RdmaRegisteredMemoryPoolPtr _memoryPool = std::make_shared<RdmaRegisteredMemoryPool>(pd->domain, 32, 32);
+  memory_poolPtr _memoryPool = std::make_shared<memory_pool>(pd->domain, 512, 2, 32);
   pd->client->setMemoryPoold(_memoryPool);
-
 
   // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
@@ -860,7 +864,7 @@ static na_return_t na_verbs_msg_send(
   // until the send completes, so we must store the object outside of this function
   CSCS_user_message::UserRDMA_message *msg;
   RdmaClientPtr                        client;
-  RdmaMemoryRegion                    *region;
+  RdmaMemoryRegionPtr                  region;
 
   // Allocate op_id
   na_verbs_op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
@@ -887,12 +891,12 @@ static na_return_t na_verbs_msg_send(
   if (pd->server) {
     if (!na_verbs_addr) throw std::runtime_error("Destination of send was not valid");
     client = pd->controller->getClient(na_verbs_addr->qp_id);
-    region = client->getFreeRegion();
+    region = client->getFreeRegion(512);
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->controller->getProtectionDomain(), buf, buf_size));
   }
   else{
     client = pd->client;
-    region = client->getFreeRegion();
+    region = client->getFreeRegion(512);
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->domain, buf, buf_size));
   }
 
@@ -913,9 +917,9 @@ static na_return_t na_verbs_msg_send(
   // still adding the wr_id to it, we lock just before we issue the request and release
   // after we have added the wr_id to the map
   {
-    na_verbs_op_id->wr_id = (uint64_t)region;
-    std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
-    client->postSend(temp, true, false, 0); // wr_id is region address
+    na_verbs_op_id->wr_id = (uint64_t)region.get();
+//    std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+    client->postSend(region, true, false, 0); // wr_id is region address
     na_verbs_op_id->info.send.wr_id = na_verbs_op_id->wr_id;
     LOG_DEBUG_MSG("SEND has TAG value " << tag);
 
@@ -1006,6 +1010,7 @@ static na_return_t na_verbs_msg_recv(
   na_cb_type     cb_type,
   uint8_t        expected_flag)
 {
+  std::cout << "Msg Recv 1 " << std::endl;
   FUNC_START_DEBUG_MSG
   uint64_t               *verbs_context = (uint64_t *) context->plugin_context;
   na_size_t              verbs_buf_size = buf_size;
@@ -1019,6 +1024,7 @@ static na_return_t na_verbs_msg_recv(
   RdmaClientPtr                        client;
 
   struct verbs_expected_info *expected_info = NULL;
+  std::cout << "Msg Recv 2 " << std::endl;
 
   // Allocate na_op_id
   na_verbs_op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
@@ -1037,7 +1043,11 @@ static na_return_t na_verbs_msg_recv(
   na_verbs_op_id->info.recv.tag         = tag;
 
   if (na_verbs_addr) {
+  std::cout << "Msg Recv 3 " << "Receive expected=" << expected_flag << " has na_addr qp:" << na_verbs_addr->qp_id << std::endl; ;
     LOG_DEBUG_MSG("Receive expected=" << expected_flag << " has na_addr qp:" << na_verbs_addr->qp_id);
+  }
+  else {
+    std::cout << "Msg Recv 3 " << "Receive expected=" << expected_flag << " has addr " << na_verbs_addr << std::endl;
   }
 
   // In future versions we will ....
@@ -1063,6 +1073,7 @@ static na_return_t na_verbs_msg_recv(
     }
     //region = RdmaMemoryRegionPtr(new RdmaMemoryRegion(pd->domain, buf, buf_size));
   }
+  std::cout << "Msg Recv 4 " << std::endl;
   //
   // post receive : use a standard bgcios message structure
   //
@@ -1084,39 +1095,43 @@ static na_return_t na_verbs_msg_recv(
         return na_verbs_complete(na_verbs_op_id);
       }
 
+//      std::cout << "**** \nPreposting receives to all clients \n" << std::endl;
+
       // make sure all clients have a pre-posted receive in their queues
-      pd->controller->for_each_client(
+/*      pd->controller->for_each_client(
         [pd](MercuryController::ClientMapPair _client) {
           if (_client.second->getNumWaitingRecv()==0) {
-            LOG_DEBUG_MSG("Posting a receive to client with qp_id " << _client.second->getQpNum());
-            RdmaMemoryRegion* region = _client.second->getFreeRegion();
-            std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
-            _client.second->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
+            LOG_DEBUG_MSG("Pre-Posting a receive to client with qp_id " << _client.second->getQpNum());
+            RdmaMemoryRegionPtr region = _client.second->getFreeRegion(512);
+//            std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+            _client.second->postRecvRegionAsID(region, (uint64_t)region->getAddress(), region->getLength());
           }
           else {
             LOG_DEBUG_MSG("Already waiting client with qp_id " << _client.second->getQpNum());
           }
         }
       );
-      // store the unexpected op until it completes and is retrieved
+ */     // store the unexpected op until it completes and is retrieved
       pd->UnexpectedOps->push_back(na_verbs_op_id);
     }
     else {
       if (client==NULL) {
         LOG_ERROR_MSG("Cannot post an expected message with no client");
+std::cout << "Cannot post an expected message with no client" << std::endl;
       }
       LOG_DEBUG_MSG("RECV (ExpectedMessage) TAG value " << tag);
 
-      RdmaMemoryRegion* region;
+      RdmaMemoryRegionPtr region;
       if (pd->server) {
-        region = client->getFreeRegion();
+        region = client->getFreeRegion(512);
       }
       else {
-        region = client->getFreeRegion();
+        region = client->getFreeRegion(512);
       }
+      LOG_DEBUG_MSG("Region obtained with address " << (uintptr_t)region.get());
       std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
-      std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
-      na_verbs_op_id->wr_id = client->postRecvRegionAsID(temp, (uint64_t)region->getAddress(), region->getLength());
+//      std::shared_ptr<RdmaMemoryRegion> temp(region, NullDeleter<RdmaMemoryRegion>() );
+      na_verbs_op_id->wr_id = client->postRecvRegionAsID(region, (uint64_t)region->getAddress(), region->getLength());
       //
       // add wr_id to our map for checking on completions later
       //
@@ -1190,6 +1205,10 @@ na_verbs_msg_recv_expected(na_class_t NA_UNUSED *na_class, na_context_t *context
 {
   na_return_t ret;
   FUNC_START_DEBUG_MSG
+  if (source==NULL) {
+std::cout << "Throwing string due to NULL client " << std::endl;
+throw std::string("No address in expected receive");
+  }
   ret = na_verbs_msg_recv(
     na_class, context, callback, arg, buf, buf_size, source, tag, op_id,
     NA_CB_RECV_EXPECTED, CSCS_user_message::ExpectedMessage);
@@ -1240,27 +1259,28 @@ na_verbs_mem_handle_free(na_class_t NA_UNUSED *na_class, na_mem_handle_t mem_han
 }
 
 /*---------------------------------------------------------------------------*/
-static na_return_t
-na_verbs_mem_register(na_class_t *na_class, na_mem_handle_t mem_handle)
-{
+static na_return_t na_verbs_mem_register(na_class_t *na_class,
+    na_mem_handle_t mem_handle) {
   FUNC_START_DEBUG_MSG
-  na_verbs_memhandle  *handle = NA_VERBS_MEM_PTR(mem_handle);
-  na_return_t             ret = NA_SUCCESS;
-  na_verbs_private_data   *pd = NA_VERBS_PRIVATE_DATA(na_class);
+  na_verbs_memhandle *handle = NA_VERBS_MEM_PTR(mem_handle);
+  na_return_t ret = NA_SUCCESS;
+  na_verbs_private_data *pd = NA_VERBS_PRIVATE_DATA(na_class);
   RdmaProtectionDomainPtr pdp;
 
   if (pd->server) {
     pdp = pd->controller->getProtectionDomain();
-  }
-  else{
+  } else {
     pdp = pd->domain;
   }
   if (!handle->memregion) {
-  handle->memregion = new RdmaMemoryRegionPtr(new RdmaMemoryRegion(pdp, handle->address, handle->bytes));
-  handle->memkey    = (*((RdmaMemoryRegionPtr*)(handle->memregion)))->getLocalKey();
-  LOG_DEBUG_MSG("Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
-  counter++;
-  LOG_DEBUG_MSG("Register counter is " << counter);
+    RdmaMemoryRegion *region = new RdmaMemoryRegion(pdp, handle->address, handle->bytes);
+    handle->memregion = region;
+    handle->memkey = region->getLocalKey();
+    LOG_DEBUG_MSG(
+        "Registered Mem Handle : address " << handle->address << " length " << handle->bytes
+        << " key " << handle->memkey);
+    counter++;
+    LOG_DEBUG_MSG("Register counter is " << counter);
   }
   FUNC_END_DEBUG_MSG
   return ret;
@@ -1275,11 +1295,11 @@ na_verbs_mem_deregister(na_class_t *na_class, na_mem_handle_t mem_handle)
   na_return_t             ret = NA_SUCCESS;
   na_verbs_private_data   *pd = NA_VERBS_PRIVATE_DATA(na_class);
 
-  LOG_DEBUG_MSG("Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+  LOG_DEBUG_MSG("Unregistered Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
   handle->memkey = 0;
   // this should destroy the shared pointer, and the region at the same time
   if (handle->memregion) {
-    RdmaMemoryRegionPtr *ptr = (RdmaMemoryRegionPtr *)(handle->memregion);
+    RdmaMemoryRegion *ptr = (RdmaMemoryRegion*)(handle->memregion);
     delete ptr;
     handle->memregion = NULL;
     counter--;
@@ -1746,6 +1766,7 @@ na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
 int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd, RdmaClientPtr client)
 {
   FUNC_START_DEBUG_MSG
+  RdmaMemoryRegion *region = nullptr;
   int wc_q = 0;
   // Check the status in the completion queue entry.
   if (completion->status != IBV_WC_SUCCESS)
@@ -1764,6 +1785,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       LOG_CIOS_TRACE_MSG("send operation completed successfully for queue pair " << completion->qp_num);
       int numRecv = client->decrementWaitingSend();
       LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
+      region = (RdmaMemoryRegion *)completion->wr_id;
       wc_q = 1;
       break;
     }
@@ -1777,13 +1799,14 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
 
       // Handle the message.
-      RdmaMemoryRegion *region = (RdmaMemoryRegion *)completion->wr_id;
+      region = (RdmaMemoryRegion *)completion->wr_id;
+      LOG_DEBUG_MSG("Region address is " << (uintptr_t)region << " " );
       bgcios::MessageHeader            *msghdr = (bgcios::MessageHeader *)region->getAddress();
       CSCS_user_message::UserRDMA_message *msg = (CSCS_user_message::UserRDMA_message *)(msghdr);
       na_verbs_op_id                    *op_id = NULL;
       struct na_verbs_addr      *na_verbs_addr = NULL;
 
-      LOG_DEBUG_MSG("received " << (msghdr->type) << " from client " << bgcios::printHeader(*msghdr).c_str());
+//      LOG_DEBUG_MSG("received " << (msghdr->type) << " from client " << bgcios::printHeader(*msghdr).c_str());
       switch (msghdr->type)
       {
         case CSCS_user_message::UnexpectedMessage:
@@ -1869,7 +1892,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           printf("unsupported message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
           break;
       }
-
       break;
     }
 
@@ -1903,6 +1925,9 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
   else {
     // this was a new connection unexpected message and we must store it until mercury posts the receive
     // do not call completion because mercury has not yet given this message an ID
+  }
+  if (region) {
+   client->releaseRegion(region);
   }
   FUNC_END_DEBUG_MSG
   return ret;

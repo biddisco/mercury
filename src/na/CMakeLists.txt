@@ -79,7 +79,10 @@ option(NA_USE_VERBS "Use VERBS." OFF)
 if(NA_USE_VERBS)
   find_package(IB_VERBS)
   find_package(RDMA_CM)
-  find_package(Boost 1.48.0 REQUIRED regex)
+find_package(Boost 1.50.0  REQUIRED
+   regex date_time serialization
+  program_options filesystem log log_setup system thread
+)
   find_package(rdmahelper)
 
   if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
@@ -238,8 +241,13 @@ if(NA_USE_VERBS)
   set(NA_SRCS
     ${NA_SRCS}
     ${CMAKE_CURRENT_SOURCE_DIR}/na_verbs.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/MercuryController.cc
   )
+  if(NOT BGQ)
+      set(NA_SRCS
+        ${NA_SRCS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/MercuryController.cc
+      )
+  endif()
 endif()
 
 #----------------------------------------------------------------------------
