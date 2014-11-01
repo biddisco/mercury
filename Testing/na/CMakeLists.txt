@@ -43,7 +43,7 @@ function(add_na_test test_name server client)
           NAME "na_${full_test_name}"
           COMMAND ${MPIEXEC}
             -n 1 $<TARGET_FILE:na_test_${server}> ${test_args} :
-            -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:na_test_${client}> ${test_args}
+            -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:na_test_${client}> ${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}
         )
       endif()
     else()
