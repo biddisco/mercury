@@ -69,7 +69,7 @@ MercuryController::~MercuryController()
   this->_largeRegion.reset();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor freeing memory pool");
   this->_memoryPool.reset();
-  LOG_CIOS_DEBUG_MSG("MercuryController destructor releaseing protection domain");
+  LOG_CIOS_DEBUG_MSG("MercuryController destructor releasing protection domain");
   this->_protectionDomain.reset();
   LOG_CIOS_DEBUG_MSG("MercuryController destructor deleting completion channel");
   this->_completionChannel.reset();
