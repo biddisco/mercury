@@ -322,7 +322,7 @@ static const na_class_t na_verbs_class_g = {
     na_verbs_addr_free,                     /* addr_free */
     na_verbs_addr_self,                     /* addr_self */
     NULL,                                   /* addr_dup */
-    na_verbs_addr_is_self,                  /* addr_is_self */
+    NULL , // na_verbs_addr_is_self,                  /* addr_is_self */
     na_verbs_addr_to_string,                /* addr_to_string */
     na_verbs_msg_get_max_expected_size,     /* msg_get_max_expected_size */
     na_verbs_msg_get_max_unexpected_size,   /* msg_get_max_expected_size */
@@ -531,6 +531,7 @@ na_verbs_finalize(na_class_t *na_class)
         poll_cq_non_blocking(pd, pd->completionChannel);
       }
       sleep(1);
+      LOG_DEBUG_MSG("Calling disconnect");
       pd->client->disconnect(true);
       na_return_t val = NA_SUCCESS;
       pd->controller.reset();
@@ -772,7 +773,7 @@ done:
 }
 
 /*---------------------------------------------------------------------------*/
-// No idea what this fuction is for yet
+// No idea what this function is for yet
 //
 static na_bool_t
 na_verbs_addr_is_self(na_class_t NA_UNUSED *na_class, na_addr_t addr)
@@ -1098,7 +1099,7 @@ static na_return_t na_verbs_msg_recv(
 //      std::cout << "**** \nPreposting receives to all clients \n" << std::endl;
 
       // make sure all clients have a pre-posted receive in their queues
-/*      pd->controller->for_each_client(
+      pd->controller->for_each_client(
         [pd](MercuryController::ClientMapPair _client) {
           if (_client.second->getNumWaitingRecv()==0) {
             LOG_DEBUG_MSG("Pre-Posting a receive to client with qp_id " << _client.second->getQpNum());
@@ -1111,8 +1112,9 @@ static na_return_t na_verbs_msg_recv(
           }
         }
       );
- */     // store the unexpected op until it completes and is retrieved
-      pd->UnexpectedOps->push_back(na_verbs_op_id);
+     // store the unexpected op until it completes and is retrieved
+ std::cout << "**** \npushing an unexpected op  \n" << std::endl;
+     pd->UnexpectedOps->push_back(na_verbs_op_id);
     }
     else {
       if (client==NULL) {
@@ -1248,7 +1250,8 @@ na_verbs_mem_handle_free(na_class_t NA_UNUSED *na_class, na_mem_handle_t mem_han
 
   // take care of any stray registrations
   if (handle->memregion) {
-    RdmaMemoryRegionPtr *ptr = (RdmaMemoryRegionPtr *)(handle->memregion);
+    LOG_DEBUG_MSG("Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+    RdmaMemoryRegion *ptr = (RdmaMemoryRegion *)(handle->memregion);
     delete ptr;
     handle->memregion = NULL;
   }
