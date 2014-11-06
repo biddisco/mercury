@@ -16,6 +16,8 @@
 #elif defined(__APPLE__)
 #    include <sys/time.h>
 #    include <mach/mach_time.h>
+#elif defined __BGQ__
+#    include <sys/time.h>
 #else
 #    include <time.h>
 #endif
@@ -61,6 +63,8 @@ hg_time_get_current(hg_time_t *tv)
 #elif defined(__APPLE__)
     static uint64_t monotonic_timebase_factor = 0;
     uint64_t monotonic_nsec;
+#elif defined __BGQ__
+    struct timeval tv2;
 #else
     struct timespec tp;
 #endif
@@ -108,6 +112,10 @@ hg_time_get_current(hg_time_t *tv)
     monotonic_nsec = (mach_absolute_time() * monotonic_timebase_factor);
     tv->tv_sec  = monotonic_nsec / 1000000000;
     tv->tv_usec = (monotonic_nsec - tv->tv_sec) / 1000;
+#elif defined __BGQ__
+    gettimeofday(&tv2, NULL);
+    tv->tv_sec  = tv2.tv_sec;
+    tv->tv_usec = tv2.tv_usec;
 #else
     if (clock_gettime(CLOCK_MONOTONIC, &tp)) {
         HG_UTIL_ERROR_DEFAULT("clock_gettime failed");

@@ -19,7 +19,7 @@
 /* Local Macros */
 /****************/
 #define PIPELINE_SIZE 4
-#define MIN_BUFFER_SIZE (2 << 15) /* 11 Stop at 4KB buffer size */
+#define MIN_BUFFER_SIZE (2 << 8) /* 11 Stop at 4KB buffer size */
 
 #ifdef MERCURY_TESTING_HAS_VERIFY_DATA
 #define HG_TEST_ALLOC(size) calloc(size, sizeof(char))

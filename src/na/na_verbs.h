@@ -33,9 +33,11 @@
 #include "mercury_atomic.h"
 #include "na.h"
 
-#include <ib_user_verbs.h>
-
 #include "cscs_messages.h"
+
+#ifndef __BGQ__
+ #include <ib_user_verbs.h>
+#endif
 
 #if (__GNUC__)
 #define __likely(x)   __builtin_expect(!!(x), 1)

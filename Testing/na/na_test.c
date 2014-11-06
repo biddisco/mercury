@@ -443,8 +443,8 @@ na_test_getaddrinfo(const char *hostname)
             break;
     }
 
-done:
     freeaddrinfo(result);
+done:
 #ifdef _WIN32
     WSACleanup();
 #endif

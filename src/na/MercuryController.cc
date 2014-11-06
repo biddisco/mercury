@@ -310,7 +310,7 @@ void MercuryController::eventChannelHandler(void)
 
          LOG_DEBUG_MSG("Pre-Posting a receive using region wr_id " << std::hex << (uintptr_t)(region.get()) );
 
-         client->postRecvRegionAsID(region, (uint64_t)region->getAddress(), region->getLength());
+         client->postRecvRegionAsID(region, (uint64_t)region->getAddress(), region->getLength(), false);
 
          // Accept the connection from the new client.
          err = client->accept();
@@ -345,8 +345,8 @@ void MercuryController::eventChannelHandler(void)
          uint32_t qp = _rdmaListener->getEventQpNum();
          RdmaClientPtr client = _clients.get(qp);
          RdmaCompletionQueuePtr completionQ = client->getCompletionQ();
-         while (client->getNumWaitingRecv()>0 || client->getNumWaitingSend()>0) {
-           LOG_ERROR_MSG("@@@ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingRecv() << " NumWaitingSend " << client->getNumWaitingSend());
+         while (client->getNumWaitingExpectedRecv()>0 || client->getNumWaitingSend()>0) {
+           LOG_ERROR_MSG("@@@ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingExpectedRecv() << " NumWaitingSend " << client->getNumWaitingSend());
 //           this->eventMonitor(1,false);
 //           LOG_ERROR_MSG("$$$ ERROR there are uncompleted events NumWaitingRecv " << client->getNumWaitingRecv() << " NumWaitingSend " << client->getNumWaitingSend());
              while (completionQ->removeCompletions() != 0) {
