@@ -19,7 +19,8 @@ namespace CSCS_user_message {
       uint32_t tag;
   };
 
-#define CSCS_UserMessageDataSize (512 - sizeof(bgcios::MessageHeader) - sizeof(CSCS_user_message::User_RDMA_Header))
+# define CSCS_UserMessageHeaderSize (sizeof(bgcios::MessageHeader) + sizeof(CSCS_user_message::User_RDMA_Header))
+# define CSCS_UserMessageDataSize (512 - CSCS_UserMessageHeaderSize)
 
   // For now we are using a borrowed header structure from bgcios, but in fact we don't need
   // most of it and will change to a simpler smaller structure in future
