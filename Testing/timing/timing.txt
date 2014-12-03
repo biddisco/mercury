@@ -4,6 +4,7 @@ rdmahelper : 920f4829247f268e3f49dcd4b5ab6855ceff3964
 
 Release
 No Logging 
+MPIEXEC_MAX_NUMPROCS 2 (1 client)
  
 bbpbg2:~/gcc/bgas/build/bgas$ ctest -R verbs
 Test project /gpfs/bbp.cscs.ch/home/biddisco/gcc/bgas/build/bgas
