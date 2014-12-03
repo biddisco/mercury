@@ -353,7 +353,7 @@ void MercuryController::eventChannelHandler(void)
                LOG_ERROR_MSG("Removed a completion from the queue ");
              // Get the next work completion.
                struct ibv_wc *completion = completionQ->popCompletion();
-               LOG_DEBUG_MSG("Removing wr_id " << completion->wr_id);
+               LOG_DEBUG_MSG("Removing wr_id " << std::setfill('0') << std::setw(12) << std::hex << completion->wr_id);
               // Find the connection that received the message.
 //              client = _clients.get(completion->qp_num);
              }
@@ -422,7 +422,7 @@ bool MercuryController::completionChannelHandler(uint64_t requestId)
 
       // Get the next work completion.
       struct ibv_wc *completion = completionQ->popCompletion();
-      LOG_DEBUG_MSG("Removing wr_id " << completion->wr_id);
+      LOG_DEBUG_MSG("Removing wr_id " << std::setfill('0') << std::setw(12) << std::hex << completion->wr_id);
       // Find the connection that received the message.
       client = _clients.get(completion->qp_num);
 
