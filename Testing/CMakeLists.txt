@@ -293,9 +293,6 @@ endforeach()
 add_mercury_opt_test(bulk_seg "extra")
 add_mercury_opt_test(bulk_seg "variable")
 
-# Additional test
-build_mercury_test(bulk_mirror)
-
 add_executable(hg_test_BW test_BW.cpp)
 target_link_libraries(hg_test_BW mercury_test)
 add_mercury_test_comm(BW verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
