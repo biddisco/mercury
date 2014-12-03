@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -12,9 +12,7 @@
 #include "na_private.h"
 #include "na_error.h"
 
-#include "mercury_hash_table.h"
 #include "mercury_queue.h"
-#include "mercury_thread.h"
 #include "mercury_thread_mutex.h"
 #include "mercury_time.h"
 #include "mercury_atomic.h"
@@ -135,8 +133,6 @@ struct na_bmi_op_id {
 };
 
 struct na_bmi_private_data {
-    na_bool_t listening;                          /* Used in server mode */
-    char *listen_addr;                            /* Server listen_addr */
     hg_thread_mutex_t test_unexpected_mutex;      /* Mutex */
     hg_queue_t *unexpected_msg_queue;             /* Unexpected message queue */
     hg_thread_mutex_t unexpected_msg_queue_mutex; /* Mutex */
@@ -148,17 +144,39 @@ struct na_bmi_private_data {
 /********************/
 /* Local Prototypes */
 /********************/
-/* verify */
+
+/* check_protocol */
 static na_bool_t
 na_bmi_check_protocol(
         const char *protocol_name
         );
 
 /* initialize */
-static na_class_t *
+static na_return_t
 na_bmi_initialize(
+        na_class_t           *na_class,
         const struct na_info *na_info,
         na_bool_t             listen
+        );
+
+/**
+ * initialize
+ *
+ * \param method_list [IN]      (Optional) list of available methods depend on
+ *                              BMI configuration, e.g., "bmi_tcp", ...
+ * \param listen_addr [IN]      (Optional) e.g., "tcp://127.0.0.1:22222"
+ * \param flags [IN]            (Optional) supported flags:
+ *                                - BMI_INIT_SERVER
+ *                                - BMI_TCP_BIND_SPECIFIC
+ *                                - BMI_AUTO_REF_COUNT
+ *                                - ... see BMI header file
+ */
+static na_return_t
+na_bmi_init(
+        na_class_t *na_class,
+        const char *method_list,
+        const char *listen_addr,
+        int         flags
         );
 
 /* finalize */
@@ -453,8 +471,11 @@ na_bmi_cancel(
 /* Local Variables */
 /*******************/
 
-static const na_class_t na_bmi_class_g = {
+const na_class_t na_bmi_class_g = {
         NULL,                                 /* private_data */
+        "bmi",                                /* name */
+        na_bmi_check_protocol,                /* check_protocol */
+        na_bmi_initialize,                    /* initialize */
         na_bmi_finalize,                      /* finalize */
         na_bmi_context_create,                /* context_create */
         na_bmi_context_destroy,               /* context_destroy */
@@ -466,7 +487,7 @@ static const na_class_t na_bmi_class_g = {
         na_bmi_addr_to_string,                /* addr_to_string */
         na_bmi_msg_get_max_expected_size,     /* msg_get_max_expected_size */
         na_bmi_msg_get_max_unexpected_size,   /* msg_get_max_expected_size */
-        na_bmi_msg_get_max_tag,               /* msg_get_maximum_tag */
+        na_bmi_msg_get_max_tag,               /* msg_get_max_tag */
         na_bmi_msg_send_unexpected,           /* msg_send_unexpected */
         na_bmi_msg_recv_unexpected,           /* msg_recv_unexpected */
         na_bmi_msg_send_expected,             /* msg_send_expected */
@@ -476,6 +497,8 @@ static const na_class_t na_bmi_class_g = {
         na_bmi_mem_handle_free,               /* mem_handle_free */
         na_bmi_mem_register,                  /* mem_register */
         na_bmi_mem_deregister,                /* mem_deregister */
+        NULL,                                 /* mem_publish */
+        NULL,                                 /* mem_unpublish */
         na_bmi_mem_handle_get_serialize_size, /* mem_handle_get_serialize_size */
         na_bmi_mem_handle_serialize,          /* mem_handle_serialize */
         na_bmi_mem_handle_deserialize,        /* mem_handle_deserialize */
@@ -485,30 +508,9 @@ static const na_class_t na_bmi_class_g = {
         na_bmi_cancel                         /* cancel */
 };
 
-static const char na_bmi_name_g[] = "bmi";
-
-const struct na_class_info na_bmi_info_g  = {
-    na_bmi_name_g,
-    na_bmi_check_protocol,
-    na_bmi_initialize
-};
-
 /********************/
 /* Plugin callbacks */
 /********************/
-
-static NA_INLINE int
-pointer_equal(void *location1, void *location2)
-{
-    return location1 == location2;
-}
-
-/*---------------------------------------------------------------------------*/
-static NA_INLINE unsigned int
-pointer_hash(void *location)
-{
-    return (unsigned int) (unsigned long) location;
-}
 
 /*---------------------------------------------------------------------------*/
 static NA_INLINE bmi_msg_tag_t
@@ -578,13 +580,14 @@ na_bmi_check_protocol(const char *protocol_name)
 }
 
 /*---------------------------------------------------------------------------*/
-static na_class_t *
-na_bmi_initialize(const struct na_info *na_info, na_bool_t listen)
+static na_return_t
+na_bmi_initialize(na_class_t * na_class, const struct na_info *na_info,
+        na_bool_t listen)
 {
     char *method_list = NULL;
     int flag;
     size_t method_list_len;
-    na_class_t *na_class = NULL;
+    na_return_t ret = NA_SUCCESS;
 
     flag = (listen) ? BMI_INIT_SERVER : 0;
 
@@ -592,6 +595,7 @@ na_bmi_initialize(const struct na_info *na_info, na_bool_t listen)
     method_list = (char *) malloc(method_list_len);
     if (!method_list) {
         NA_LOG_ERROR("Could not allocate method_list");
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
 
@@ -600,37 +604,28 @@ na_bmi_initialize(const struct na_info *na_info, na_bool_t listen)
     strcpy(method_list, "bmi_");
     strcat(method_list, na_info->protocol_name);
 
-    na_class = NA_BMI_Init((listen) ? method_list : NULL,
+    ret = na_bmi_init(na_class, (listen) ? method_list : NULL,
             (listen) ? na_info->port_name : NULL, flag);
 
-    free(method_list);
-
 done:
-    return na_class;
+    free(method_list);
+    return ret;
 }
 
 /*---------------------------------------------------------------------------*/
-na_class_t *
-NA_BMI_Init(const char *method_list, const char *listen_addr, int flags)
+static na_return_t
+na_bmi_init(na_class_t *na_class, const char *method_list,
+        const char *listen_addr, int flags)
 {
-    na_class_t *na_class = NULL;
-    na_bool_t listening;
     hg_queue_t *unexpected_msg_queue = NULL;
     hg_queue_t *unexpected_op_queue = NULL;
-    na_bool_t error_occurred = NA_FALSE;
+    na_return_t ret = NA_SUCCESS;
     int bmi_ret;
 
-    na_class = (na_class_t *) malloc(sizeof(na_class_t));
-    if (!na_class) {
-        NA_LOG_ERROR("Could not allocate NA class");
-        error_occurred = NA_TRUE;
-        goto done;
-    }
-    *na_class = na_bmi_class_g;
     na_class->private_data = malloc(sizeof(struct na_bmi_private_data));
     if (!na_class->private_data) {
         NA_LOG_ERROR("Could not allocate NA private data class");
-        error_occurred = NA_TRUE;
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
 
@@ -638,20 +633,15 @@ NA_BMI_Init(const char *method_list, const char *listen_addr, int flags)
     bmi_ret = BMI_initialize(method_list, listen_addr, flags);
     if (bmi_ret < 0) {
         NA_LOG_ERROR("BMI_initialize() failed");
-        error_occurred = NA_TRUE;
+        ret = NA_PROTOCOL_ERROR;
         goto done;
     }
-
-    listening = (na_bool_t) (flags == BMI_INIT_SERVER);
-    NA_BMI_PRIVATE_DATA(na_class)->listening = listening;
-    NA_BMI_PRIVATE_DATA(na_class)->listen_addr =
-            (listening) ? strdup(listen_addr) : NULL;
 
     /* Create queue for unexpected messages */
     unexpected_msg_queue = hg_queue_new();
     if (!unexpected_msg_queue) {
         NA_LOG_ERROR("Could not create unexpected message queue");
-        error_occurred = NA_TRUE;
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
     NA_BMI_PRIVATE_DATA(na_class)->unexpected_msg_queue = unexpected_msg_queue;
@@ -660,7 +650,7 @@ NA_BMI_Init(const char *method_list, const char *listen_addr, int flags)
     unexpected_op_queue = hg_queue_new();
     if (!unexpected_op_queue) {
         NA_LOG_ERROR("Could not create unexpected op queue");
-        error_occurred = NA_TRUE;
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
     NA_BMI_PRIVATE_DATA(na_class)->unexpected_op_queue = unexpected_op_queue;
@@ -676,11 +666,11 @@ NA_BMI_Init(const char *method_list, const char *listen_addr, int flags)
     hg_atomic_set32(&NA_BMI_PRIVATE_DATA(na_class)->rma_tag, NA_BMI_RMA_TAG);
 
 done:
-    if (error_occurred) {
-        /* TODO clean stuff */
+    if (ret != NA_SUCCESS) {
+        na_bmi_finalize(na_class);
     }
 
-    return na_class;
+    return ret;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -710,9 +700,6 @@ na_bmi_finalize(na_class_t *na_class)
     /* Free unexpected message queue */
     hg_queue_free(NA_BMI_PRIVATE_DATA(na_class)->unexpected_msg_queue);
 
-    /* Free dupp'ed listen addr */
-    free(NA_BMI_PRIVATE_DATA(na_class)->listen_addr);
-
     /* Finalize BMI */
     bmi_ret = BMI_finalize();
     if (bmi_ret < 0) {
@@ -729,7 +716,6 @@ na_bmi_finalize(na_class_t *na_class)
             &NA_BMI_PRIVATE_DATA(na_class)->unexpected_op_queue_mutex);
 
     free(na_class->private_data);
-    free(na_class);
 
     return ret;
 }
@@ -2164,15 +2150,75 @@ na_bmi_release(struct na_cb_info *callback_info, void *arg)
 
 /*---------------------------------------------------------------------------*/
 static na_return_t
-na_bmi_cancel(na_class_t NA_UNUSED *na_class, na_context_t *context,
-        na_op_id_t op_id)
+na_bmi_cancel(na_class_t *na_class, na_context_t *context, na_op_id_t op_id)
 {
     struct na_bmi_op_id *na_bmi_op_id = (struct na_bmi_op_id *) op_id;
     bmi_context_id *bmi_context = (bmi_context_id *) context->plugin_context;
     na_return_t ret = NA_SUCCESS;
+    int bmi_ret;
 
-    /* TODO correct */
-    BMI_cancel(na_bmi_op_id->info.send_expected.op_id, *bmi_context);
+    /* TODO make this atomic */
+    if (na_bmi_op_id->completed) goto done;
 
+    switch (na_bmi_op_id->type) {
+        case NA_CB_LOOKUP:
+            /* Nothing for now */
+            break;
+        case NA_CB_SEND_UNEXPECTED:
+            bmi_ret = BMI_cancel(na_bmi_op_id->info.send_unexpected.op_id,
+                    *bmi_context);
+            if (bmi_ret < 0) {
+                NA_LOG_ERROR("BMI_cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_RECV_UNEXPECTED:
+        {
+            struct na_bmi_op_id *na_bmi_pop_op_id = NULL;
+
+            /* Must remove op_id from unexpected op_id queue */
+            while (na_bmi_pop_op_id != na_bmi_op_id) {
+                na_bmi_pop_op_id = na_bmi_msg_unexpected_op_pop(na_class);
+
+                /* Push back unexpected op_id to queue if it does not match */
+                if (na_bmi_pop_op_id != na_bmi_op_id) {
+                    na_bmi_msg_unexpected_op_push(na_class, na_bmi_pop_op_id);
+                }
+            }
+        }
+            break;
+        case NA_CB_SEND_EXPECTED:
+            bmi_ret = BMI_cancel(na_bmi_op_id->info.send_expected.op_id,
+                    *bmi_context);
+            if (bmi_ret < 0) {
+                NA_LOG_ERROR("BMI_cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_RECV_EXPECTED:
+            bmi_ret = BMI_cancel(na_bmi_op_id->info.recv_expected.op_id,
+                    *bmi_context);
+            if (bmi_ret < 0) {
+                NA_LOG_ERROR("BMI_cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_PUT:
+            /* TODO */
+            break;
+        case NA_CB_GET:
+            /* TODO */
+            break;
+        default:
+            NA_LOG_ERROR("Operation not supported");
+            ret = NA_INVALID_PARAM;
+            break;
+    }
+    free(na_bmi_op_id);
+
+done:
     return ret;
 }

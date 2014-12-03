@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -27,7 +27,7 @@ struct hg_request_class {
     hg_thread_cond_t progress_cond;
 };
 
-struct hg_request_object {
+struct hg_request {
     void *data;
     hg_atomic_int32_t completed;
     hg_request_class_t *request_class;
@@ -35,7 +35,7 @@ struct hg_request_object {
 
 /*---------------------------------------------------------------------------*/
 static HG_UTIL_INLINE hg_util_bool_t
-hg_request_check(hg_request_object_t *request)
+hg_request_check(hg_request_t *request)
 {
     int trigger_ret;
     unsigned int trigger_flag = 0;
@@ -84,21 +84,23 @@ hg_request_finalize(hg_request_class_t *request_class)
 {
     int ret = HG_UTIL_SUCCESS;
 
+    if (!request_class) goto done;
+
     hg_thread_mutex_destroy(&request_class->progress_mutex);
     hg_thread_cond_destroy(&request_class->progress_cond);
     free(request_class);
 
+done:
     return ret;
 }
 
 /*---------------------------------------------------------------------------*/
-hg_request_object_t *
+hg_request_t *
 hg_request_create(hg_request_class_t *request_class)
 {
-    struct hg_request_object *hg_request = NULL;
+    struct hg_request *hg_request = NULL;
 
-    hg_request = (struct hg_request_object *)
-            malloc(sizeof(struct hg_request_object));
+    hg_request = (struct hg_request *) malloc(sizeof(struct hg_request));
     if (!hg_request) {
         HG_UTIL_ERROR_DEFAULT("Could not allocate hg_request");
         goto done;
@@ -114,7 +116,7 @@ done:
 
 /*---------------------------------------------------------------------------*/
 int
-hg_request_destroy(hg_request_object_t *request)
+hg_request_destroy(hg_request_t *request)
 {
     int ret = HG_UTIL_SUCCESS;
 
@@ -125,7 +127,7 @@ hg_request_destroy(hg_request_object_t *request)
 
 /*---------------------------------------------------------------------------*/
 int
-hg_request_complete(hg_request_object_t *request)
+hg_request_complete(hg_request_t *request)
 {
     int ret = HG_UTIL_SUCCESS;
 
@@ -160,8 +162,7 @@ hg_request_complete(hg_request_object_t *request)
 
 /*---------------------------------------------------------------------------*/
 int
-hg_request_wait(hg_request_object_t *request, unsigned int timeout,
-        unsigned int *flag)
+hg_request_wait(hg_request_t *request, unsigned int timeout, unsigned int *flag)
 {
     double remaining = timeout / 1000.0; /* Convert timeout in ms into seconds */
     hg_util_bool_t completed = HG_UTIL_FALSE;
@@ -177,6 +178,11 @@ hg_request_wait(hg_request_object_t *request, unsigned int timeout,
 
         if (request->request_class->progressing) {
             hg_time_t t1, t2;
+
+            if (remaining <= 0) {
+                /* Timeout occurred so leave */
+                break;
+            }
 
             hg_time_get_current(&t1);
             if (hg_thread_cond_timedwait(&request->request_class->progress_cond,
@@ -221,8 +227,8 @@ hg_request_wait(hg_request_object_t *request, unsigned int timeout,
 
 /*---------------------------------------------------------------------------*/
 int
-hg_request_waitall(int count, hg_request_object_t *request[],
-        unsigned int timeout, unsigned int *flag)
+hg_request_waitall(int count, hg_request_t *request[], unsigned int timeout,
+        unsigned int *flag)
 {
     /* TODO */
     int i;
@@ -233,7 +239,7 @@ hg_request_waitall(int count, hg_request_object_t *request[],
 
 /*---------------------------------------------------------------------------*/
 int
-hg_request_set_data(hg_request_object_t *request, void *data)
+hg_request_set_data(hg_request_t *request, void *data)
 {
     int ret = HG_UTIL_SUCCESS;
 
@@ -244,7 +250,7 @@ hg_request_set_data(hg_request_object_t *request, void *data)
 
 /*---------------------------------------------------------------------------*/
 void *
-hg_request_get_data(hg_request_object_t *request)
+hg_request_get_data(hg_request_t *request)
 {
     void *ret = NULL;
 

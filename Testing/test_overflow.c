@@ -13,41 +13,45 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-extern hg_id_t hg_test_rpc_open_id_g;
+extern hg_id_t hg_test_overflow_id_g;
 
 static hg_return_t
 hg_test_rpc_forward_cb(const struct hg_cb_info *callback_info)
 {
     hg_handle_t handle = callback_info->handle;
     hg_request_t *request = (hg_request_t *) callback_info->arg;
-    int rpc_open_ret;
-    int rpc_open_event_id;
-    rpc_open_out_t rpc_open_out_struct;
+    overflow_out_t out_struct;
     hg_return_t ret = HG_SUCCESS;
 
+    hg_string_t string;
+    size_t string_len;
+
+    if (callback_info->ret != HG_SUCCESS) {
+        HG_LOG_WARNING("Return from callback info is not HG_SUCCESS");
+        goto done;
+    }
+
     /* Get output */
-    ret = HG_Get_output(handle, &rpc_open_out_struct);
+    ret = HG_Get_output(handle, &out_struct);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "Could not get output\n");
         goto done;
     }
 
     /* Get output parameters */
-    rpc_open_ret = rpc_open_out_struct.ret;
-    rpc_open_event_id = rpc_open_out_struct.event_id;
-    printf("rpc_open returned: %d with event_id: %d\n", rpc_open_ret,
-            rpc_open_event_id);
+    string = out_struct.string;
+    string_len = out_struct.string_len;
+    printf("Returned string (length %zu): %s\n", string_len, string);
 
     /* Free request */
-    ret = HG_Free_output(handle, &rpc_open_out_struct);
+    ret = HG_Free_output(handle, &out_struct);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "Could not free output\n");
         goto done;
     }
 
-    hg_request_complete(request);
-
 done:
+    hg_request_complete(request);
     return ret;
 }
 
@@ -61,10 +65,6 @@ main(int argc, char *argv[])
     hg_request_t *request = NULL;
     hg_handle_t handle;
     na_addr_t addr;
-    rpc_open_in_t  rpc_open_in_struct;
-
-    hg_const_string_t rpc_open_path = MERCURY_TESTING_TEMP_DIRECTORY "/test.h5";
-    rpc_handle_t rpc_open_handle;
     hg_return_t hg_ret;
 
     /* Initialize the interface (for convenience, shipper_test_client_init
@@ -75,26 +75,19 @@ main(int argc, char *argv[])
 
     request = hg_request_create(request_class);
 
-    hg_ret = HG_Create(hg_class, context, addr, hg_test_rpc_open_id_g, &handle);
+    hg_ret = HG_Create(hg_class, context, addr, hg_test_overflow_id_g, &handle);
     if (hg_ret != HG_SUCCESS) {
         fprintf(stderr, "Could not start call\n");
         return EXIT_FAILURE;
     }
 
-    /* Fill input structure */
-    rpc_open_handle.cookie = 12345;
-    rpc_open_in_struct.path = rpc_open_path;
-    rpc_open_in_struct.handle = rpc_open_handle;
-
     /* Forward call to remote addr and get a new request */
-    printf("Forwarding rpc_open, op id: %u...\n", hg_test_rpc_open_id_g);
-    hg_ret = HG_Forward(handle, hg_test_rpc_forward_cb, request,
-            &rpc_open_in_struct);
+    printf("Forwarding call, op id: %u...\n", hg_test_overflow_id_g);
+    hg_ret = HG_Forward(handle, hg_test_rpc_forward_cb, request, NULL);
     if (hg_ret != HG_SUCCESS) {
         fprintf(stderr, "Could not forward call\n");
         return EXIT_FAILURE;
     }
-    printf("Forwarding rpc_open 3, op id: %u...\n", hg_test_rpc_open_id_g);
 
     hg_request_wait(request, HG_MAX_IDLE_TIME, NULL);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -13,6 +13,9 @@
 
 #ifdef NA_HAS_MPI
 #include "na_mpi.h"
+#endif
+#ifdef NA_HAS_CCI
+#include "na_cci.h"
 #endif
 #ifdef MERCURY_HAS_PARALLEL_TESTING
 #include <mpi.h>
@@ -70,6 +73,7 @@ static const struct na_test_opt na_test_opt_g[] = {
 };
 
 static na_bool_t na_test_use_mpi_g = NA_FALSE;
+static na_bool_t na_test_use_cci_g = NA_FALSE;
 static na_bool_t na_test_use_static_mpi_g = NA_FALSE;
 static na_bool_t na_test_use_verbs_g = NA_FALSE;
 na_bool_t na_test_use_self_g = NA_FALSE;
@@ -219,6 +223,8 @@ na_test_gen_config(int argc, char *argv[], unsigned int port)
                 na_class_name = strdup(na_test_opt_arg_g);
                 if (strcmp("mpi", na_class_name) == 0)
                     na_test_use_mpi_g = NA_TRUE;
+                if (strcmp("cci", na_class_name) == 0)
+                    na_test_use_cci_g = NA_TRUE;
                 if (strcmp("verbs", na_class_name) == 0) {
                   if (na_protocol_name) free(na_protocol_name);
                   na_protocol_name = strdup("rdma");
@@ -370,6 +376,8 @@ na_test_get_config(char *addr_name, na_size_t len)
             exit(0);
         }
         fgets(config_addr_name, NA_TEST_MAX_ADDR_NAME, config);
+        /* This prevents retaining the newline, if any */
+        config_addr_name[strlen(config_addr_name) - 1] = '\0';
         printf("Port name read: %s\n", config_addr_name);
         fclose(config);
     }
@@ -457,7 +465,6 @@ NA_Test_client_init(int argc, char *argv[], char *addr_name,
         na_size_t max_addr_name, int *rank)
 {
     const char *info_string = NULL;
-    char test_addr_name[NA_TEST_MAX_ADDR_NAME];
     na_class_t *na_class = NULL;
 
     info_string = na_test_gen_config(argc, argv, 22222);
@@ -471,12 +478,17 @@ NA_Test_client_init(int argc, char *argv[], char *addr_name,
 
     na_class = NA_Initialize(info_string, NA_FALSE);
 
-    /* Get config from file */
-    na_test_get_config(test_addr_name, NA_TEST_MAX_ADDR_NAME);
+    /* Get config from file if self option is not passed */
+    if (!na_test_use_self_g) {
+        char test_addr_name[NA_TEST_MAX_ADDR_NAME];
 
-    strncpy(addr_name, test_addr_name,
-            (max_addr_name < NA_TEST_MAX_ADDR_NAME) ?
-                    max_addr_name : NA_TEST_MAX_ADDR_NAME);
+        na_test_get_config(test_addr_name, NA_TEST_MAX_ADDR_NAME);
+
+        strncpy(addr_name, test_addr_name,
+                (max_addr_name < NA_TEST_MAX_ADDR_NAME) ?
+                        max_addr_name : NA_TEST_MAX_ADDR_NAME);
+    }
+
     if (rank) *rank = na_test_comm_rank_g;
 
     return na_class;
@@ -514,6 +526,12 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
 #ifdef NA_HAS_MPI
     if (na_test_use_mpi_g) {
         na_test_set_config(NA_MPI_Get_port_name(na_class));
+    } else
+#endif
+#ifdef NA_HAS_CCI
+    if (na_test_use_cci_g) {
+	    const char *uri = NA_CCI_Get_port_name(na_class);
+	    na_test_set_config(uri);
     } else
 #endif
     {

@@ -59,6 +59,26 @@ option(MERCURY_TESTING_SRUN_MPMD "Generate srun compatible test commands (srun -
 mark_as_advanced(MERCURY_TESTING_SRUN_MPMD)
 
 #------------------------------------------------------------------------------
+# NA protocols used for testing
+# (case where the NA plugin defines multiple protocols)
+#------------------------------------------------------------------------------
+if(NA_USE_BMI)
+  set(NA_BMI_TESTING_PROTOCOL "" CACHE STRING "Protocol(s) used for testing (e.g., tcp;ib).")
+  mark_as_advanced(NA_BMI_TESTING_PROTOCOL)
+endif()
+
+#Does not really make sense for MPI (so do not add an option for it)
+#if(NA_USE_MPI)
+#  set(NA_MPI_TESTING_PROTOCOL "" CACHE STRING "Protocol(s) used for testing (e.g., tcp;ib).")
+#  mark_as_advanced(NA_MPI_TESTING_PROTOCOL)
+#endif()
+
+if(NA_USE_SSM)
+  set(NA_SSM_TESTING_PROTOCOL "" CACHE STRING "Protocol(s) used for testing (e.g., tcp;ib).")
+  mark_as_advanced(NA_SSM_TESTING_PROTOCOL)
+endif()
+
+#------------------------------------------------------------------------------
 # Compile kwsys library and setup TestDriver
 #------------------------------------------------------------------------------
 configure_file(
@@ -101,16 +121,19 @@ function(build_mercury_test test_name)
   endif()
 endfunction()
 
-macro(add_mercury_test_comm test_name comm opt params)
+macro(add_mercury_test_comm test_name comm protocol opt params)
   # Set full test name
   set(full_test_name ${test_name})
-  set(opt_names ${comm} ${opt})
+  set(opt_names ${comm} ${protocol} ${opt})
   foreach(opt_name ${opt_names})
     set(full_test_name ${full_test_name}_${opt_name})
   endforeach()
 
   # Set test arguments
   set(test_args --comm ${comm})
+  if(protocol)
+    set(test_args ${test_args} --protocol ${protocol})
+  endif()
   if(opt)
     set(test_args ${test_args} --${opt})
   endif()
@@ -175,7 +198,7 @@ macro(add_mercury_test_comm test_name comm opt params)
   endif()
 
   # Coresident test
-  if (MERCURY_TESTING_CORESIDENT)
+  if(MERCURY_TESTING_CORESIDENT)
     set(cores_test_name ${full_test_name}_self)
     set(cores_test_args ${test_args} --self)
     if (MERCURY_ENABLE_PARALLEL_TESTING)
@@ -194,10 +217,30 @@ endmacro()
 
 function(add_mercury_test test_name opt)
   foreach(comm ${NA_PLUGINS})
-    if (${comm} STREQUAL "verbs")
-      add_mercury_test_comm(${test_name} verbs "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
+    string(TOUPPER ${comm} upper_comm)
+    if(NA_${upper_comm}_TESTING_PROTOCOL)
+      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
+        add_mercury_test_comm(${test_name} ${comm} ${protocol} "")
+      endforeach()
     else()
-      add_mercury_test_comm(${test_name} ${comm} "${opt}" "")
+      if (${comm} STREQUAL "verbs")
+        add_mercury_test_comm(${test_name} verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
+      else()
+        add_mercury_test_comm(${test_name} ${comm} "" "${opt}" "")
+      endif()
+    endif()
+  endforeach()
+endfunction()
+
+function(add_mercury_opt_test test_name opt)
+  foreach(comm ${NA_PLUGINS})
+    string(TOUPPER ${comm} upper_comm)
+    if(NA_${upper_comm}_TESTING_PROTOCOL)
+      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
+        add_mercury_test_comm(${test_name} ${comm} ${protocol} ${opt} "")
+      endforeach()
+    else()
+      add_mercury_test_comm(${test_name} ${comm} "" ${opt})
     endif()
   endforeach()
 endfunction()
@@ -233,8 +276,9 @@ set(MERCURY_tests
   rpc
   bulk
   bulk_seg
-  pipeline
-  scale
+#  pipeline
+  perf
+  overflow
 )
 if(NOT WIN32)
   set(MERCURY_tests ${MERCURY_tests} posix)
@@ -246,8 +290,8 @@ foreach(MERCURY_test ${MERCURY_tests})
   add_mercury_test(${MERCURY_test} "")
 endforeach()
 
-add_mercury_test(bulk_seg "extra")
-add_mercury_test(bulk_seg "variable")
+add_mercury_opt_test(bulk_seg "extra")
+add_mercury_opt_test(bulk_seg "variable")
 
 # Additional test
 build_mercury_test(bulk_mirror)

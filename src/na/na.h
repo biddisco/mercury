@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -133,6 +133,19 @@ NA_EXPORT na_return_t
 NA_Finalize(
         na_class_t *na_class
         );
+
+/**
+ * Test whether class is listening or not.
+ *
+ * \param na_class [IN]         pointer to NA class
+ *
+ * \return NA_TRUE if listening or NA_FALSE if not
+ */
+NA_EXPORT na_bool_t
+NA_Is_listening(
+        na_class_t *na_class
+        );
+
 
 /**
  * Create a new context.
@@ -534,6 +547,38 @@ NA_Mem_deregister(
         na_class_t      *na_class,
         na_mem_handle_t  mem_handle
         );
+
+/**
+ * Expose memory for RMA operations.
+ * Memory pieces must be registered before one-sided transfers can be
+ * initiated.
+ *
+ * \param na_class [IN]         pointer to NA class
+ * \param mem_handle [IN]       pointer to abstract memory handle
+ *
+ * \return NA_SUCCESS or corresponding NA error code
+ */
+NA_EXPORT na_return_t
+NA_Mem_publish(
+        na_class_t      *na_class,
+        na_mem_handle_t  mem_handle
+        );
+
+/**
+ * Unpublish memory.
+ *
+ * \param na_class [IN]         pointer to NA class
+ * \param mem_handle [IN]       abstract memory handle
+ *
+ * \return NA_SUCCESS or corresponding NA error code
+ */
+NA_EXPORT na_return_t
+NA_Mem_unpublish(
+        na_class_t      *na_class,
+        na_mem_handle_t  mem_handle
+        );
+
+
 
 /**
  * Get size required to serialize handle.

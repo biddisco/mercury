@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -14,10 +14,6 @@
 #include "na.h"
 
 #include <mpi.h>
-
-/* MPI initialization flags */
-#define MPI_INIT_SERVER 0x01 /* set up to listen for unexpected messages */
-#define MPI_INIT_STATIC 0x10 /* set up static inter-communicator */
 
 #ifdef __cplusplus
 extern "C" {

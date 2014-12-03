@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -29,11 +29,11 @@ hg_test_bulk_write_cb(hg_handle_t handle);
 hg_return_t
 hg_test_bulk_seg_write_cb(hg_handle_t handle);
 
-/**
- * test_pipeline
- */
-hg_return_t
-hg_test_pipeline_write_cb(hg_handle_t handle);
+///**
+// * test_pipeline
+// */
+//hg_return_t
+//hg_test_pipeline_write_cb(hg_handle_t handle);
 
 /**
  * test_posix
@@ -48,11 +48,17 @@ hg_return_t
 hg_test_posix_close_cb(hg_handle_t handle);
 
 /**
- * test_scale
+ * test_perf
  */
 hg_return_t
-hg_test_scale_open_cb(hg_handle_t handle);
+hg_test_perf_rpc_cb(hg_handle_t handle);
 hg_return_t
-hg_test_scale_write_cb(hg_handle_t handle);
+hg_test_perf_bulk_cb(hg_handle_t handle);
+
+/**
+ * test_overflow
+ */
+hg_return_t
+hg_test_overflow_cb(hg_handle_t handle);
 
 #endif /* MERCURY_RPC_CB_H */

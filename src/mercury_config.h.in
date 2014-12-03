@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -38,6 +38,7 @@
 #define HG_PORT_NAME "MERCURY_PORT_NAME"
 
 #cmakedefine HG_HAS_BOOST
+#cmakedefine HG_HAS_CHECKSUMS
 #cmakedefine HG_HAS_XDR
 
 #cmakedefine HG_HAS_VERBOSE_ERROR

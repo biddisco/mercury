@@ -18,11 +18,21 @@ function(add_na_test test_name server client)
   else()
     set(LOOP_CLIENTS 1)
   endif()
-  foreach(comm ${NA_PLUGINS})
-    set(test_args --comm ${comm})
-    set(full_test_name ${test_name}_${comm})
 
-    #
+  # Set full test name
+  set(full_test_name ${test_name})
+  set(opt_names ${comm} ${protocol})
+  foreach(opt_name ${opt_names})
+    set(full_test_name ${full_test_name}_${opt_name})
+  endforeach()
+
+  # Set test arguments
+  set(test_args --comm ${comm})
+  if(protocol)
+    set(test_args ${test_args} --protocol ${protocol})
+  endif()
+
+     #
     # Dynamic client/server test
     #
     if(${comm} STREQUAL "verbs")
@@ -61,10 +71,22 @@ function(add_na_test test_name server client)
       add_test(NAME "na_${static_test_name}"
         COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 1
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:na_test_${server}> ${MPIEXEC_POSTFLAGS}
-        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS}
+        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPIEXEC_MAX_NUMPROCS}
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:na_test_${client}> ${static_test_args}
       )
   endif()
+endmacro()
+
+function(add_na_test test_name server client)
+  foreach(comm ${NA_PLUGINS})
+    string(TOUPPER ${comm} upper_comm)
+    if(NA_${upper_comm}_TESTING_PROTOCOL)
+      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
+        add_na_test_comm(${test_name} ${server} ${client} ${comm} ${protocol})
+      endforeach()
+    else()
+      add_na_test_comm(${test_name} ${server} ${client} ${comm} "")
+    endif()
   endforeach()
 endfunction()
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -12,7 +12,6 @@
 #include "na_private.h"
 #include "na_error.h"
 
-#include "mercury_hash_table.h"
 #include "mercury_list.h"
 #include "mercury_queue.h"
 #include "mercury_thread.h"
@@ -31,6 +30,10 @@
 /****************/
 /* Local Macros */
 /****************/
+
+/* MPI initialization flags */
+#define MPI_INIT_SERVER 0x01 /* set up to listen for unexpected messages */
+#define MPI_INIT_STATIC 0x10 /* set up static inter-communicator */
 
 /* Msg sizes */
 #define NA_MPI_UNEXPECTED_SIZE 4096
@@ -266,8 +269,9 @@ na_mpi_check_protocol(
         );
 
 /* initialize */
-static na_class_t *
+static na_return_t
 na_mpi_initialize(
+        na_class_t *na_class,
         const struct na_info *na_info,
         na_bool_t listen
         );
@@ -543,8 +547,11 @@ na_mpi_cancel(
 /* Local Variables */
 /*******************/
 
-static const na_class_t na_mpi_class_g = {
+const na_class_t na_mpi_class_g = {
         NULL,                                 /* private_data */
+        "mpi",                                /* name */
+        na_mpi_check_protocol,                /* check_protocol */
+        na_mpi_initialize,                    /* initialize */
         na_mpi_finalize,                      /* finalize */
         NULL,                                 /* context_create */
         NULL,                                 /* context_destroy */
@@ -556,7 +563,7 @@ static const na_class_t na_mpi_class_g = {
         na_mpi_addr_to_string,                /* addr_to_string */
         na_mpi_msg_get_max_expected_size,     /* msg_get_max_expected_size */
         na_mpi_msg_get_max_unexpected_size,   /* msg_get_max_expected_size */
-        na_mpi_msg_get_max_tag,               /* msg_get_maximum_tag */
+        na_mpi_msg_get_max_tag,               /* msg_get_max_tag */
         na_mpi_msg_send_unexpected,           /* msg_send_unexpected */
         na_mpi_msg_recv_unexpected,           /* msg_recv_unexpected */
         na_mpi_msg_send_expected,             /* msg_send_expected */
@@ -566,6 +573,8 @@ static const na_class_t na_mpi_class_g = {
         na_mpi_mem_handle_free,               /* mem_handle_free */
         na_mpi_mem_register,                  /* mem_register */
         na_mpi_mem_deregister,                /* mem_deregister */
+        NULL,                                 /* mem_publish */
+        NULL,                                 /* mem_unpublish */
         na_mpi_mem_handle_get_serialize_size, /* mem_handle_get_serialize_size */
         na_mpi_mem_handle_serialize,          /* mem_handle_serialize */
         na_mpi_mem_handle_deserialize,        /* mem_handle_deserialize */
@@ -575,14 +584,7 @@ static const na_class_t na_mpi_class_g = {
         na_mpi_cancel                         /* cancel */
 };
 
-static const char na_mpi_name_g[] = "mpi";
 static MPI_Comm na_mpi_init_comm_g = MPI_COMM_NULL; /* MPI comm used at init */
-
-const struct na_class_info na_mpi_info_g = {
-    na_mpi_name_g,
-    na_mpi_check_protocol,
-    na_mpi_initialize
-};
 
 #ifdef NA_MPI_HAS_GNI_SETUP
 const uint8_t ptag_value = 20;
@@ -598,13 +600,6 @@ static NA_INLINE int
 pointer_equal(void *location1, void *location2)
 {
     return location1 == location2;
-}
-
-/*---------------------------------------------------------------------------*/
-static NA_INLINE unsigned int
-pointer_hash(void *location)
-{
-    return (unsigned int) (unsigned long) location;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -1084,30 +1079,21 @@ na_mpi_check_protocol(const char NA_UNUSED *protocol_name)
 }
 
 /*---------------------------------------------------------------------------*/
-static na_class_t *
-na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
+static na_return_t
+na_mpi_initialize(na_class_t *na_class, const struct na_info *na_info,
+        na_bool_t listen)
 {
-    na_class_t *na_class = NULL;
     int mpi_ext_initialized = 0;
     na_bool_t listening, use_static_inter_comm;
     hg_queue_t *unexpected_op_queue = NULL;
-    na_bool_t error_occurred = NA_FALSE;
     int flags = (listen) ? MPI_INIT_SERVER : 0;
     int mpi_ret;
-
-    na_class = (na_class_t *) malloc(sizeof(na_class_t));
-    if (!na_class) {
-        NA_LOG_ERROR("Could not allocate NA class");
-        error_occurred = NA_TRUE;
-        goto done;
-    }
-
-    *na_class = na_mpi_class_g;
+    na_return_t ret = NA_SUCCESS;
 
     na_class->private_data = malloc(sizeof(struct na_mpi_private_data));
     if (!na_class->private_data) {
         NA_LOG_ERROR("Could not allocate NA private data class");
-        error_occurred = NA_TRUE;
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
 
@@ -1124,7 +1110,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
     mpi_ret = MPI_Initialized(&mpi_ext_initialized);
     if (mpi_ret != MPI_SUCCESS) {
         NA_LOG_ERROR("MPI_Initialized failed");
-        error_occurred = NA_TRUE;
+        ret = NA_PROTOCOL_ERROR;
         goto done;
     }
     NA_MPI_PRIVATE_DATA(na_class)->mpi_ext_initialized =
@@ -1147,7 +1133,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
                     &provided);
             if (provided != MPI_THREAD_MULTIPLE) {
                 NA_LOG_ERROR("MPI_THREAD_MULTIPLE cannot be set");
-                error_occurred = NA_TRUE;
+                ret = NA_PROTOCOL_ERROR;
                 goto done;
             }
         } else {
@@ -1157,7 +1143,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
         }
         if (mpi_ret != MPI_SUCCESS) {
             NA_LOG_ERROR("Could not initialize MPI");
-            error_occurred = NA_TRUE;
+            ret = NA_PROTOCOL_ERROR;
             goto done;
         }
     }
@@ -1170,7 +1156,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
         mpi_ret = MPI_Comm_dup(comm, &NA_MPI_PRIVATE_DATA(na_class)->intra_comm);
         if (mpi_ret != MPI_SUCCESS) {
             NA_LOG_ERROR("Could not duplicate communicator");
-            error_occurred = NA_TRUE;
+            ret = NA_PROTOCOL_ERROR;
             goto done;
         }
     } else if (use_static_inter_comm) {
@@ -1186,7 +1172,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
                 &NA_MPI_PRIVATE_DATA(na_class)->intra_comm);
         if (mpi_ret != MPI_SUCCESS) {
             NA_LOG_ERROR("Could not split communicator");
-            error_occurred = NA_TRUE;
+            ret = NA_PROTOCOL_ERROR;
             goto done;
         }
     }
@@ -1199,7 +1185,7 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
     unexpected_op_queue = hg_queue_new();
     if (!unexpected_op_queue) {
         NA_LOG_ERROR("Could not create unexpected op queue");
-        error_occurred = NA_TRUE;
+        ret = NA_NOMEM_ERROR;
         goto done;
     }
     NA_MPI_PRIVATE_DATA(na_class)->unexpected_op_queue = unexpected_op_queue;
@@ -1218,8 +1204,8 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
     /* If server opens a port */
     if (listening) {
         NA_MPI_PRIVATE_DATA(na_class)->accepting = NA_TRUE;
-        if (!use_static_inter_comm && na_mpi_open_port(na_class) != NA_SUCCESS) {
-            error_occurred = NA_TRUE;
+        if (!use_static_inter_comm && (ret = na_mpi_open_port(na_class)) != NA_SUCCESS) {
+            NA_LOG_ERROR("Cannot open port");
             goto done;
         }
 
@@ -1234,11 +1220,11 @@ na_mpi_initialize(const struct na_info *na_info, na_bool_t listen)
     }
 
 done:
-    if (error_occurred) {
-        /* TODO clean stuff */
+    if (ret != NA_SUCCESS) {
+       na_mpi_finalize(na_class);
     }
 
-    return na_class;
+    return ret;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -1311,7 +1297,6 @@ na_mpi_finalize(na_class_t *na_class)
             &NA_MPI_PRIVATE_DATA(na_class)->unexpected_op_queue_mutex);
 
     free(na_class->private_data);
-    free(na_class);
 
  done:
     return ret;
@@ -2591,19 +2576,72 @@ na_mpi_release(struct na_cb_info *callback_info, void *arg)
 
 /*---------------------------------------------------------------------------*/
 static na_return_t
-na_mpi_cancel(na_class_t NA_UNUSED *na_class, na_context_t NA_UNUSED *context,
+na_mpi_cancel(na_class_t *na_class, na_context_t NA_UNUSED *context,
         na_op_id_t op_id)
 {
     struct na_mpi_op_id *na_mpi_op_id = (struct na_mpi_op_id *) op_id;
     na_return_t ret = NA_SUCCESS;
+    int mpi_ret;
 
-    /* TODO */
-    if (na_mpi_op_id->completed) {
+    /* TODO make this atomic */
+    if (na_mpi_op_id->completed) goto done;
 
+    switch (na_mpi_op_id->type) {
+        case NA_CB_LOOKUP:
+            /* Nothing for now */
+            break;
+        case NA_CB_SEND_UNEXPECTED:
+            mpi_ret = MPI_Cancel(&na_mpi_op_id->info.send_unexpected.data_request);
+            if (mpi_ret != MPI_SUCCESS) {
+                NA_LOG_ERROR("MPI_Cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_RECV_UNEXPECTED:
+        {
+            struct na_mpi_op_id *na_mpi_pop_op_id = NULL;
+
+            /* Must remove op_id from unexpected op_id queue */
+            while (na_mpi_pop_op_id != na_mpi_op_id) {
+                na_mpi_pop_op_id = na_mpi_msg_unexpected_op_pop(na_class);
+
+                /* Push back unexpected op_id to queue if it does not match */
+                if (na_mpi_pop_op_id != na_mpi_op_id) {
+                    na_mpi_msg_unexpected_op_push(na_class, na_mpi_pop_op_id);
+                }
+            }
+        }
+            break;
+        case NA_CB_SEND_EXPECTED:
+            mpi_ret = MPI_Cancel(&na_mpi_op_id->info.send_expected.data_request);
+            if (mpi_ret != MPI_SUCCESS) {
+                NA_LOG_ERROR("MPI_Cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_RECV_EXPECTED:
+            mpi_ret = MPI_Cancel(&na_mpi_op_id->info.recv_expected.data_request);
+            if (mpi_ret != MPI_SUCCESS) {
+                NA_LOG_ERROR("MPI_Cancel() failed");
+                ret = NA_PROTOCOL_ERROR;
+                goto done;
+            }
+            break;
+        case NA_CB_PUT:
+            /* TODO */
+            break;
+        case NA_CB_GET:
+            /* TODO */
+            break;
+        default:
+            NA_LOG_ERROR("Operation not supported");
+            ret = NA_INVALID_PARAM;
+            break;
     }
-    /*
-    MPI_Cancel(na_mpi_op_id->)
-    */
+    free(na_mpi_op_id);
 
+done:
     return ret;
 }

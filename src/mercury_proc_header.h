@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Argonne National Laboratory, Department of Energy,
+ * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
  *                    UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
@@ -21,14 +21,14 @@ struct hg_header_request {
      hg_uint32_t cookie;           /* Random cookie */
      hg_uint16_t crc16;            /* CRC16 checksum */
      /* Should be 128 bits here */
-     hg_bulk_t   extra_buf_handle; /* Extra handle (large data) */
+     hg_bulk_t   extra_in_handle;  /* Extra handle (large data) */
 };
 
 struct hg_header_response {
-    hg_uint8_t  flags;  /* Flags */
-    hg_error_t  error;  /* Error */
-    hg_uint32_t cookie; /* Cookie */
-    hg_uint16_t crc16;  /* CRC16 checksum */
+    hg_uint8_t  flags;      /* Flags */
+    hg_int32_t  ret_code;   /* Return code */
+    hg_uint32_t cookie;     /* Cookie */
+    hg_uint16_t crc16;      /* CRC16 checksum */
     hg_uint8_t  padding;
     /* Should be 96 bits here */
 };
@@ -128,12 +128,14 @@ hg_proc_header_response_init(struct hg_header_response *header);
  * \param buf_size [IN]         buffer size
  * \param header [IN/OUT]       pointer to header structure
  * \param op [IN]               operation type: HG_ENCODE / HG_DECODE
+ * \param bulk_class [IN]       HG bulk class
  *
  * \return HG_SUCCESS or corresponding HG error code
  */
 HG_EXPORT hg_return_t
 hg_proc_header_request(void *buf, size_t buf_size,
-        struct hg_header_request *header, hg_proc_op_t op);
+        struct hg_header_request *header, hg_proc_op_t op,
+        hg_bulk_class_t *bulk_class);
 
 /**
  * Process private information for sending/receiving response.
@@ -152,22 +154,22 @@ hg_proc_header_response(void *buf, size_t buf_size,
 /**
  * Verify private information from request header.
  *
- * \param header [IN]           request header structure
+ * \param header [IN]           pointer to request header structure
  *
  * \return HG_SUCCESS or corresponding HG error code
  */
 HG_EXPORT hg_return_t
-hg_proc_header_request_verify(struct hg_header_request header);
+hg_proc_header_request_verify(const struct hg_header_request *header);
 
 /**
  * Verify private information from response header.
  *
- * \param header [IN]           response header structure
+ * \param header [IN]           pointer to response header structure
  *
  * \return HG_SUCCESS or corresponding HG error code
  */
 HG_EXPORT hg_return_t
-hg_proc_header_response_verify(struct hg_header_response header);
+hg_proc_header_response_verify(const struct hg_header_response *header);
 
 #ifdef __cplusplus
 }
