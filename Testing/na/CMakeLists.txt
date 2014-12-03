@@ -12,7 +12,7 @@ function(build_na_test test_name)
   endif()
 endfunction()
 
-function(add_na_test test_name server client)
+function(add_na_test_comm test_name server client comm protocol)
   if(MPI_NUM_CLIENTS)
     math(EXPR LOOP_CLIENTS "${MPI_NUM_CLIENTS}-1")
   else()
@@ -32,7 +32,7 @@ function(add_na_test test_name server client)
     set(test_args ${test_args} --protocol ${protocol})
   endif()
 
-     #
+    #
     # Dynamic client/server test
     #
     if(${comm} STREQUAL "verbs")
