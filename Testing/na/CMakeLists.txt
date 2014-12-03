@@ -75,7 +75,7 @@ function(add_na_test test_name server client)
         ${MPIEXEC_PREFLAGS} $<TARGET_FILE:na_test_${client}> ${static_test_args}
       )
   endif()
-endmacro()
+endfunction()
 
 function(add_na_test test_name server client)
   foreach(comm ${NA_PLUGINS})
