@@ -121,128 +121,94 @@ function(build_mercury_test test_name)
   endif()
 endfunction()
 
-macro(add_mercury_test_comm test_name comm protocol opt params)
+#-----------------------------------------------------------------------------
+# Adds a test with the correct MPI command line
+# supports standard mpiexec and also srun --multi-prog format
+#-----------------------------------------------------------------------------
+function(add_test_wrapper distributed test_name name_suffixes server_args client_args)
   # Set full test name
   set(full_test_name ${test_name})
-  set(opt_names ${comm} ${protocol} ${opt})
-  foreach(opt_name ${opt_names})
-    set(full_test_name ${full_test_name}_${opt_name})
+  foreach(suffix ${name_suffixes})
+    set(full_test_name ${full_test_name}_${suffix})
   endforeach()
-
-  # Set test arguments
-  set(test_args --comm ${comm})
-  if(protocol)
-    set(test_args ${test_args} --protocol ${protocol})
-  endif()
-  if(opt)
-    set(test_args ${test_args} --${opt})
-  endif()
-
-  set(param_list ${opt})
-  set(flag 1)
-  foreach(param ${params})
-    message("param is ${param}")
-    if(flag)
-      set(test_args ${test_args} --${param})
-      set(flag 0)
-    else()
-      set(test_args ${test_args} ${param})
-      set(flag 1)
-    endif()
-  endforeach()
-
-  #
-  # Dynamic client/server test
-  #
-  if(${comm} STREQUAL "verbs")
+  
+  if (${distributed})
+    # if we are running with srun 
     if (MERCURY_TESTING_SRUN_MPMD)
-      string(REPLACE ";" " " test_args "${test_args}")
-      file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name} 
-        " 0   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_server ${test_args} \n"
-      )
-      file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name}
-        " 1-${MPI_NUM_CLIENTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_${test_name} ${test_args} \n"
+      file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/hg_test_${full_test_name} 
+        " 0   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_server ${server_args} \n"
+        " 1-${MPI_NUM_CLIENTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_${test_name} ${client_args} \n"
       )
       add_test(
         NAME "mercury_${full_test_name}"
-        COMMAND ${MPIEXEC} -n ${MPIEXEC_MAX_NUMPROCS} --multi-prog ${CMAKE_CURRENT_BINARY_DIR}/mercury_${full_test_name}
+        COMMAND ${MPIEXEC} 
+          --multi-prog ${CMAKE_CURRENT_BINARY_DIR}/hg_test_${full_test_name}
       )
-   else()
+    else()
       add_test(
         NAME "mercury_${full_test_name}"
         COMMAND ${MPIEXEC}
-          -n 1 $<TARGET_FILE:hg_test_server> ${test_args} :
-          -n ${MPI_NUM_CLIENTS} $<TARGET_FILE:hg_test_${test_name}> ${test_args}
+          ${MPIEXEC_NUMPROC_FLAG} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_server> ${MPIEXEC_POSTFLAGS} ${server_args} :
+          ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_${test_name}> ${MPIEXEC_POSTFLAGS} ${client_args}
       )
     endif()
   else()
-    add_test(NAME "mercury_${full_test_name}"
+    add_test(NAME "mercury_driver_${full_test_name}"
       COMMAND $<TARGET_FILE:mercury_test_driver>
-      --server $<TARGET_FILE:hg_test_server>
-      --client $<TARGET_FILE:hg_test_${test_name}> ${test_args}
+      --server $<TARGET_FILE:hg_test_server> ${server_args}
+      --client $<TARGET_FILE:hg_test_${test_name}> ${client_args}
     )
-  endif()
-  
-  #
-  # Static client/server test
-  #
-  if(${comm} STREQUAL "mpi")
-    set(static_test_name ${full_test_name}_static)
-    set(static_test_args ${test_args} --static)
-      add_test(NAME "mercury_${static_test_name}"
-        COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 1
-        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_server> ${MPIEXEC_POSTFLAGS}
-        ${static_test_args} : ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS}
-        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_${test_name}> ${static_test_args}
-      )
-  endif()
-
-  # Coresident test
-  if(MERCURY_TESTING_CORESIDENT)
-    set(cores_test_name ${full_test_name}_self)
-    set(cores_test_args ${test_args} --self)
-    if (MERCURY_ENABLE_PARALLEL_TESTING)
-      add_test(NAME "mercury_${cores_test_name}"
-        COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${MPIEXEC_MAX_NUMPROCS}
-        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_${test_name}> ${MPIEXEC_POSTFLAGS}
-        ${cores_test_args}
-      )
-    else()
-      add_test(NAME "mercury_${cores_test_name}"
-        COMMAND $<TARGET_FILE:hg_test_${test_name}> ${cores_test_args}
-      )
-    endif()
-  endif()
-endmacro()
-
-function(add_mercury_test test_name opt)
-  foreach(comm ${NA_PLUGINS})
-    string(TOUPPER ${comm} upper_comm)
-    if(NA_${upper_comm}_TESTING_PROTOCOL)
-      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
-        add_mercury_test_comm(${test_name} ${comm} ${protocol} "")
-      endforeach()
-    else()
-      if (${comm} STREQUAL "verbs")
-        add_mercury_test_comm(${test_name} verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
-      else()
-        add_mercury_test_comm(${test_name} ${comm} "" "${opt}" "")
-      endif()
-    endif()
-  endforeach()
+  endif() 
 endfunction()
 
-function(add_mercury_opt_test test_name opt)
+#-----------------------------------------------------------------------------
+# Add a test for all supported comm and protocol variants
+# an additional parameter list may be supplied or "" is empty
+#-----------------------------------------------------------------------------
+function(add_mercury_test test_name name_suffix params)
   foreach(comm ${NA_PLUGINS})
     string(TOUPPER ${comm} upper_comm)
-    if(NA_${upper_comm}_TESTING_PROTOCOL)
-      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
-        add_mercury_test_comm(${test_name} ${comm} ${protocol} ${opt} "")
-      endforeach()
-    else()
-      add_mercury_test_comm(${test_name} ${comm} "" ${opt} "")
+   
+    set(distributed "0")  
+    # if the communication plugin only supports running on separete nodes
+    if(NA_${upper_comm}_TESTING_DISTRIBUTED)
+      set(distributed "1") 
     endif()
-  endforeach()
+
+    # currently we pass the same args to server and client
+    # support for different args to each process can be added here
+    set(test_args "--comm ${comm} ${params} ")
+    if(NA_${upper_comm}_TESTING_PROTOCOL)
+      # add special args to test needed by certain protocols
+      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
+        set(test_args "${test_args} --protocol ${protocol}")
+        add_test_wrapper(${distributed} ${test_name}"${name_suffix};${comm};${protocol}" ${test_args} ${test_args})
+      endforeach()
+    elseif(${comm} STREQUAL "verbs")
+      # add special args to test needed by verbs plugin 
+      set(test_args "${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}")
+      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
+    elseif(${comm} STREQUAL "mpi")
+      # normal MPI test
+      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
+      # Static client/server version of test
+      set(test_args "${test_args} --static")
+      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm};static" ${test_args} ${test_args})
+      if(MERCURY_TESTING_CORESIDENT)
+        set(test_args "${test_args} --self")
+        if (MERCURY_ENABLE_PARALLEL_TESTING)
+          add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm};self" ${test_args} ${test_args})
+        else()
+          add_test(NAME "mercury_${test_name}_self"
+            COMMAND $<TARGET_FILE:hg_test_${test_name}> ${cores_test_args}
+          )
+        endif()
+      endif()
+    else()  
+      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
+    endif()
+    # Coresident test
+  endforeach()  
 endfunction()
 
 #------------------------------------------------------------------------------
@@ -287,12 +253,12 @@ endif()
 # Build tests and add them to ctest
 foreach(MERCURY_test ${MERCURY_tests})
   build_mercury_test(${MERCURY_test})
-  add_mercury_test(${MERCURY_test} "")
+  add_mercury_test(${MERCURY_test} "" "")
 endforeach()
 
-add_mercury_opt_test(bulk_seg "extra")
-add_mercury_opt_test(bulk_seg "variable")
+add_mercury_test(bulk_seg "extra" "--extra")
+add_mercury_test(bulk_seg "variable" "--variable")
 
-add_executable(hg_test_BW test_BW.cpp)
-target_link_libraries(hg_test_BW mercury_test)
-add_mercury_test_comm(BW verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
+#add_executable(hg_test_BW test_BW.cpp)
+#target_link_libraries(hg_test_BW mercury_test)
+#add_mercury_test_comm(BW verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
