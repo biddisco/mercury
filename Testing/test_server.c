@@ -44,8 +44,11 @@ main(int argc, char *argv[])
             ret = HG_Trigger(hg_class, context, 0, 1, &actual_count);
         } while ((ret == HG_SUCCESS) && actual_count);
 
-        if (hg_atomic_cas32(&hg_test_finalizing_count_g, 1, 1))
-            break;
+//        printf("testing Ready to quit with num clients and fin_g %d %d\n",numClients,hg_test_finalizing_count_g);
+        if (hg_atomic_cas32(&hg_test_finalizing_count_g, numClients, 1)) {
+          printf("Ready to quit \n");
+          break;
+        }
 
         ret = HG_Progress(hg_class, context, HG_MAX_IDLE_TIME);
     } while (ret == HG_SUCCESS);
