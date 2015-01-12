@@ -144,6 +144,10 @@ int MercuryController::startup()
    // Create a memory pool for pinned buffers
    _memoryPool = std::make_shared<memory_pool>(_protectionDomain, 512, 8, 32);
 
+   // create a shared receive queue
+   LOG_CIOS_DEBUG_MSG("Creating SRQ shared receive queue ");
+   _rdmaListener->create_srq(_protectionDomain);
+
    // Listen for connections.
    int err = _rdmaListener->listen(256);
    if (err != 0) {
@@ -290,7 +294,7 @@ void MercuryController::eventChannelHandler(void)
          // Construct a new RdmaClient object for the new client.
          RdmaClientPtr client;
          try {
-           client = std::make_shared<RdmaClient>(_rdmaListener->getEventId(), _protectionDomain, completionQ, _memoryPool);
+           client = std::make_shared<RdmaClient>(_rdmaListener->getEventId(), _protectionDomain, completionQ, _memoryPool, _rdmaListener->SRQ());
          }
          catch (bgcios::RdmaError& e) {
            LOG_ERROR_MSG("error creating rdma client: %s\n" << e.what());
