@@ -107,7 +107,6 @@ extern na_class_t na_cci_class_g;
 extern na_class_t na_verbs_class_g;
 #endif
 
-
 static const na_class_t *na_class_table[] = {
 #ifdef NA_HAS_BMI
     &na_bmi_class_g,
