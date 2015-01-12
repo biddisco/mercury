@@ -139,14 +139,17 @@ struct PrintMap : public std::unary_function<T, void>
 /* ************************************************* */
 unsigned int na_verbs_get_port(na_class_t *na_class)
 {
+  FUNC_START_DEBUG_MSG
   na_verbs_private_data *pd = NA_VERBS_PRIVATE_DATA(na_class);
 #ifndef __BGQ__
+std::cout << "pd and controller " << pd << " " << std::endl;
   int na_test_verbs_port_g = pd->controller->getPort();
   std::cout << na_test_verbs_port_g << std::endl;
 #else
   // this is never called on the client
   int na_test_verbs_port_g = -1;
 #endif
+  FUNC_END_DEBUG_MSG
   return na_test_verbs_port_g;
 }
 
@@ -154,11 +157,12 @@ unsigned int na_verbs_get_port(na_class_t *na_class)
 /* Static NA VERBS Class function Prototypes         */
 /* ************************************************* */
 
-static na_class_t*
-na_verbs_initialize(const struct na_info *na_info, na_bool_t listen);
-
 static na_bool_t
 na_verbs_check_protocol(const char *protocol);
+
+static na_return_t
+na_verbs_initialize(na_class_t * na_class, const struct na_info *na_info,
+    na_bool_t NA_UNUSED listen);
 
 static na_return_t
 na_verbs_finalize(na_class_t *in_na_class);
@@ -326,8 +330,11 @@ na_verbs_complete(struct na_verbs_op_id *na_verbs_op_id);
 /*******************/
 /* Local Variables */
 /*******************/
-static const na_class_t na_verbs_class_g = {
+extern "C" const na_class_t na_verbs_class_g = {
     NULL,                                   /* private_data */
+    "verbs",                                /* name */
+    na_verbs_check_protocol,                /* check_protocol */
+    na_verbs_initialize,                    /* initialize */
     na_verbs_finalize,                      /* finalize */
     NULL,                                   /* context_create */
     NULL,                                   /* context_destroy */
@@ -349,6 +356,8 @@ static const na_class_t na_verbs_class_g = {
     na_verbs_mem_handle_free,               /* mem_handle_free */
     na_verbs_mem_register,                  /* mem_register */
     na_verbs_mem_deregister,                /* mem_deregister */
+    NULL,                                   /* mem_publish */
+    NULL,                                   /* mem_unpublish */
     na_verbs_mem_handle_get_serialize_size, /* mem_handle_get_serialize_size */
     na_verbs_mem_handle_serialize,          /* mem_handle_serialize */
     na_verbs_mem_handle_deserialize,        /* mem_handle_deserialize */
@@ -358,6 +367,7 @@ static const na_class_t na_verbs_class_g = {
     na_verbs_cancel                         /* cancel */
 };
 
+/*
 extern "C" {
   static const char na_verbs_name_g[] = "verbs";
 
@@ -367,6 +377,7 @@ extern "C" {
       na_verbs_initialize
   };
 };
+*/
 
 /*---------------------------------------------------------------------------*/
 #ifndef __BGQ__
@@ -409,6 +420,7 @@ static na_bool_t
 na_verbs_check_protocol(const char *protocol)
 {
   FUNC_START_DEBUG_MSG
+  std::cout << "Got a protocol string " << protocol << std::endl;
   na_bool_t accept = NA_FALSE;
   if (strstr(protocol, "rdma@") != 0) {
     accept = NA_TRUE;
@@ -418,15 +430,14 @@ na_verbs_check_protocol(const char *protocol)
 }
 
 /*---------------------------------------------------------------------------*/
-static na_class_t *
-na_verbs_initialize(const struct na_info *na_info, na_bool_t listen)
+static na_return_t
+na_verbs_initialize(na_class_t * na_class, const struct na_info *na_info,
+    na_bool_t NA_UNUSED listen)
 {
   FUNC_START_DEBUG_MSG
-  na_class_t *na_class = NULL;
   na_bool_t error_occurred = NA_FALSE;
   na_verbs_private_data *pd = NULL;
 
-  na_class = (na_class_t *) malloc(sizeof(na_class_t));
   if (!na_class) {
     NA_LOG_ERROR("Could not allocate NA class");
     error_occurred = NA_TRUE;
@@ -490,7 +501,7 @@ na_verbs_initialize(const struct na_info *na_info, na_bool_t listen)
     // TODO clean stuff
   }
   FUNC_END_DEBUG_MSG
-  return na_class;
+  return NA_SUCCESS;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -1360,6 +1371,8 @@ na_verbs_mem_handle_serialize(na_class_t NA_UNUSED *na_class, void *buf,
 }
 
 /*---------------------------------------------------------------------------*/
+// received a mem handle from a remote peer, create a local mem handle
+// to use for the next put/get operation
 static na_return_t
 na_verbs_mem_handle_deserialize(na_class_t NA_UNUSED *na_class,
     na_mem_handle_t *mem_handle, const void *buf, na_size_t buf_size)
@@ -1884,6 +1897,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             }
             else {
               LOG_WARN_MSG("Unexpected arrived before it has been posted - storing data until ready, wr_id = " << completion->wr_id);
+              throw "Unexpected arrived too soon. Abort";
               //
               // The buffer and na_op_id have not been assigned because the connection was made and an unexpected
               // receive has arrived before mercury server posted one.

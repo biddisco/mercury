@@ -104,7 +104,7 @@ extern na_class_t na_ssm_class_g;
 extern na_class_t na_cci_class_g;
 #endif
 #ifdef NA_HAS_VERBS
-extern struct na_class_info na_verbs_info_g;
+extern na_class_t na_verbs_class_g;
 #endif
 
 
@@ -122,7 +122,7 @@ static const na_class_t *na_class_table[] = {
     &na_cci_class_g,
 #endif
 #ifdef NA_HAS_VERBS
-    &na_verbs_info_g,
+    &na_verbs_class_g,
 #endif
     NULL
 };
