@@ -5,4 +5,4 @@ build*
 *.gz
 *.tgz
 *.out
-
+.ptp-sync-folder
