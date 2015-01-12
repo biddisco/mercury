@@ -28,7 +28,7 @@
 /****************/
 /* Local Macros */
 /****************/
-#define HG_MAX_UNEXPECTED_RECV 256 /* TODO Variable */
+#define HG_MAX_UNEXPECTED_RECV 1 /* TODO Variable */
 
 /* Convert value to string */
 #define HG_ERROR_STRING_MACRO(def, value, string) \
