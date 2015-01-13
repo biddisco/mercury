@@ -1,4 +1,9 @@
 #------------------------------------------------------------------------------
+# include macros for adding tests with mpi support etc
+#------------------------------------------------------------------------------
+include(${MERCURY_SOURCE_DIR}/CMake/TestMacros.cmake)
+
+#------------------------------------------------------------------------------
 # Set up test options
 #------------------------------------------------------------------------------
 set(MERCURY_TESTING_BUFFER_SIZE "16" CACHE STRING
@@ -27,14 +32,20 @@ if(MERCURY_TESTING_VERIFY_DATA)
 endif(MERCURY_TESTING_VERIFY_DATA)
 mark_as_advanced(MERCURY_TESTING_VERIFY_DATA)
 
+option(MERCURY_TESTING_ENABLE_DYNAMIC_MPI 
+  "Enable tests which use MPI_Comm_connect, MPI_Comm_accept" ON)
+
 option(MERCURY_ENABLE_PARALLEL_TESTING
   "Enable testing in parallel (requires MPI)." OFF)
 if(MERCURY_ENABLE_PARALLEL_TESTING OR NA_USE_MPI)
   set(MERCURY_HAS_PARALLEL_TESTING 1)
 
-  # use N-1 clients (and 1 server) 
-  math(EXPR MPI_NUM_CLIENTS "${MPIEXEC_MAX_NUMPROCS}-1")
-
+  # use N-1 clients (and 1 server)
+  if(MPIEXEC_MAX_NUMPROCS)
+    math(EXPR MPI_NUM_CLIENTS "${MPIEXEC_MAX_NUMPROCS}-1")
+  else()
+    set(MPI_NUM_CLIENTS 1)
+  endif()
   if(NA_USE_MPI AND NOT MERCURY_ENABLE_PARALLEL_TESTING)
     # Always force parallel testing if NA_USE_MPI is turned ON
     set(MERCURY_ENABLE_PARALLEL_TESTING "ON" CACHE BOOL
@@ -55,8 +66,11 @@ mark_as_advanced(MERCURY_TESTING_TEMP_DIRECTORY)
 option(MERCURY_TESTING_CORESIDENT "Enable testing of coresident mode." OFF)
 mark_as_advanced(MERCURY_TESTING_CORESIDENT)
 
-option(MERCURY_TESTING_SRUN_MPMD "Generate srun compatible test commands (srun --multi-prog config) " 0) 
-mark_as_advanced(MERCURY_TESTING_SRUN_MPMD)
+option(MERCURY_TESTING_WITH_SLURM "Generate srun compatible test commands (srun --multi-prog config) " 0) 
+mark_as_advanced(MERCURY_TESTING_WITH_SLURM)
+if(MERCURY_TESTING_WITH_SLURM) 
+  find_package(SLURM)
+endif()
 
 #------------------------------------------------------------------------------
 # NA protocols used for testing
@@ -124,96 +138,6 @@ function(build_mercury_test test_name)
   if(MERCURY_ENABLE_COVERAGE)
     set_coverage_flags(hg_test_${test_name})
   endif()
-endfunction()
-
-#-----------------------------------------------------------------------------
-# Adds a test with the correct MPI command line
-# supports standard mpiexec and also srun --multi-prog format
-#-----------------------------------------------------------------------------
-function(add_test_wrapper distributed test_name name_suffixes server_args client_args)
-  # Set full test name
-  set(full_test_name ${test_name})
-  foreach(suffix ${name_suffixes})
-    set(full_test_name ${full_test_name}_${suffix})
-  endforeach()
-  
-  if (${distributed})
-    # if we are running with srun 
-    if (MERCURY_TESTING_SRUN_MPMD)
-      file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/hg_test_${full_test_name} 
-        " 0   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_server ${server_args} \n"
-        " 1-${MPI_NUM_CLIENTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/hg_test_${test_name} ${client_args} \n"
-      )
-      add_test(
-        NAME "mercury_${full_test_name}"
-        COMMAND ${MPIEXEC} 
-          --multi-prog ${CMAKE_CURRENT_BINARY_DIR}/hg_test_${full_test_name}
-      )
-    else()
-      add_test(
-        NAME "mercury_${full_test_name}"
-        COMMAND ${MPIEXEC}
-          ${MPIEXEC_NUMPROC_FLAG} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_server> ${MPIEXEC_POSTFLAGS} ${server_args} :
-          ${MPIEXEC_NUMPROC_FLAG} ${MPI_NUM_CLIENTS} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:hg_test_${test_name}> ${MPIEXEC_POSTFLAGS} ${client_args}
-      )
-    endif()
-  else()
-    add_test(NAME "mercury_driver_${full_test_name}"
-      COMMAND $<TARGET_FILE:mercury_test_driver>
-      --server $<TARGET_FILE:hg_test_server> ${server_args}
-      --client $<TARGET_FILE:hg_test_${test_name}> ${client_args}
-    )
-  endif() 
-endfunction()
-
-#-----------------------------------------------------------------------------
-# Add a test for all supported comm and protocol variants
-# an additional parameter list may be supplied or "" is empty
-#-----------------------------------------------------------------------------
-function(add_mercury_test test_name name_suffix params)
-  foreach(comm ${NA_PLUGINS})
-    string(TOUPPER ${comm} upper_comm)
-   
-    set(distributed "0")  
-    # if the communication plugin only supports running on separete nodes
-    if(NA_${upper_comm}_TESTING_DISTRIBUTED)
-      set(distributed "1") 
-    endif()
-
-    # currently we pass the same args to server and client
-    # support for different args to each process can be added here
-    set(test_args "--comm ${comm} ${params} ")
-    if(NA_${upper_comm}_TESTING_PROTOCOL)
-      # add special args to test needed by certain protocols
-      foreach(protocol ${NA_${upper_comm}_TESTING_PROTOCOL})
-        set(test_args "${test_args} --protocol ${protocol}")
-        add_test_wrapper(${distributed} ${test_name}"${name_suffix};${comm};${protocol}" ${test_args} ${test_args})
-      endforeach()
-    elseif(${comm} STREQUAL "verbs")
-      # add special args to test needed by verbs plugin 
-      set(test_args "${test_args} --device ${VERBS_DEVICE_NAME} --iface ${VERBS_INTERFACE_NAME}")
-      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
-    elseif(${comm} STREQUAL "mpi")
-      # normal MPI test
-      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
-      # Static client/server version of test
-      set(test_args "${test_args} --static")
-      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm};static" ${test_args} ${test_args})
-      if(MERCURY_TESTING_CORESIDENT)
-        set(test_args "${test_args} --self")
-        if (MERCURY_ENABLE_PARALLEL_TESTING)
-          add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm};self" ${test_args} ${test_args})
-        else()
-          add_test(NAME "mercury_${test_name}_self"
-            COMMAND $<TARGET_FILE:hg_test_${test_name}> ${cores_test_args}
-          )
-        endif()
-      endif()
-    else()  
-      add_test_wrapper(${distributed} ${test_name} "${name_suffix};${comm}" ${test_args} ${test_args})
-    endif()
-    # Coresident test
-  endforeach()  
 endfunction()
 
 #------------------------------------------------------------------------------

@@ -15,7 +15,7 @@ foreach(p
 endforeach()
 
 foreach(p
-    CMP0017
+    CMP0017 # Disable : Prefer files from the CMake module directory when including from there
   )
   if(POLICY ${p})
     cmake_policy(SET ${p} OLD)
