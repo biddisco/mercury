@@ -120,6 +120,9 @@ static const na_class_t *na_class_table[] = {
 #ifdef NA_HAS_CCI
     &na_cci_class_g,
 #endif
+#ifdef NA_HAS_CCI
+    &na_cci_class_g,
+#endif
 #ifdef NA_HAS_VERBS
     &na_verbs_class_g,
 #endif

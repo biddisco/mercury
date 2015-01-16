@@ -533,6 +533,12 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
 	    na_test_set_config(uri);
     } else
 #endif
+#ifdef NA_HAS_CCI
+    if (na_test_use_cci_g) {
+	    const char *uri = NA_CCI_Get_port_name(na_class);
+	    na_test_set_config(uri);
+    } else
+#endif
     {
         /* Gather strings and write config */
         na_test_set_config(info_string);

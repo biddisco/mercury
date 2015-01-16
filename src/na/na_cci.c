@@ -503,12 +503,6 @@ const na_class_t na_cci_class_g = {
 /* Plugin callbacks */
 /********************/
 
-static NA_INLINE int
-pointer_equal(void *location1, void *location2)
-{
-	return location1 == location2;
-}
-
 /*---------------------------------------------------------------------------*/
 static na_bool_t
 na_cci_check_protocol(const char *protocol_name)
@@ -2055,7 +2049,6 @@ na_cci_cancel(na_class_t NA_UNUSED * na_class, na_context_t NA_UNUSED * context,
 	      na_op_id_t NA_UNUSED op_id)
 {
 	na_cci_op_id_t		*na_cci_op_id = (na_cci_op_id_t *)op_id;
-	na_cci_private_data_t	*priv = na_class->private_data;
 	na_cci_addr_t		*na_cci_addr = NULL;
 	na_return_t		ret = NA_SUCCESS;
 
@@ -2105,8 +2098,8 @@ na_cci_cancel(na_class_t NA_UNUSED * na_class, na_context_t NA_UNUSED * context,
 		{
 			int found = 0;
 			na_cci_op_id_t *tmp = NULL;
-			na_cci_addr_t *na_cci_addr =
-				na_cci_op_id->info.recv_expected.na_cci_addr;
+
+			na_cci_addr = na_cci_op_id->info.recv_expected.na_cci_addr;
 
 			/* we can't decref in handle_recv_expected() */
 			op_id_decref(na_cci_op_id);
