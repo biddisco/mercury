@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.5 FATAL_ERROR)
-project(NA C)
+project(NA C CXX)
 
 #------------------------------------------------------------------------------
 # Setup install directories and cmake module
@@ -25,7 +25,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${NA_CMAKE_DIR})
 # by other projects.
 #-----------------------------------------------------------------------------
 if(NOT NA_EXPORTED_TARGETS)
-  set(NA_EXPORTED_TARGETS "mercury-targets")
+  set(NA_EXPORTED_TARGETS ${MERCURY_EXPORTED_TARGETS})
 endif()
 
 #------------------------------------------------------------------------------
@@ -75,6 +75,55 @@ if(NA_USE_BMI)
   endif()
 endif()
 
+option(NA_USE_VERBS "Use VERBS." OFF)
+if(NA_USE_VERBS)
+  find_package(IB_VERBS)
+  find_package(RDMA_CM)
+find_package(Boost 1.50.0  REQUIRED
+   regex date_time serialization
+  program_options filesystem log log_setup system thread
+)
+  find_package(rdmahelper)
+
+  if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
+    set(NA_PLUGINS ${NA_PLUGINS} verbs)
+    set(NA_HAS_VERBS 1)
+    set(NA_VERBS_TESTING_DISTRIBUTED 1 CACHE INTERNAL "" FORCE)
+    set(NA_EXT_LIB_DEPENDENCIES
+      ${NA_EXT_LIB_DEPENDENCIES}
+      ${IB_VERBS_LIBRARIES}
+      ${RDMA_CM_LIBRARIES}
+      ${Boost_LIBRARIES}
+    )
+    set(NA_EXT_INCLUDE_DEPENDENCIES
+      ${NA_EXT_INCLUDE_DEPENDENCIES}
+      ${BGC_INCLUDE_DIR}
+    )
+    include_directories(
+      ${Boost_INCLUDE_DIR}
+      ${IB_VERBS_INCLUDE_DIRS}
+      ${RDMA_CM_INCLUDE_DIRS}
+      ${rdmahelper_INCLUDE_DIR}
+    )
+    set(NA_EXT_INCLUDE_DEPENDENCIES
+      ${NA_EXT_INCLUDE_DEPENDENCIES}
+      ${BGC_INCLUDE_DIR}
+    )
+    add_definitions(${rdmahelper_DEFINITIONS})
+
+    set(VERBS_DEVICE_NAME "roq" CACHE STRING "Infiniband device name to use")
+    set(VERBS_INTERFACE_NAME "roq0" CACHE STRING "Infiniband interface name to use")
+    set(VERBS_PORT_NUMBER "10000" CACHE STRING "Infiniband port number to use")  
+    
+    if (${VERBS_DEVICE_NAME} MATCHES "bgvrnic")
+      ADD_DEFINITIONS(-DBGQ_BGVRNIC)
+    endif()
+    
+  else()
+    message("Fatal : Could not find RDMA.")
+  endif()
+endif()
+
 
 # SSM
 option(NA_USE_SSM "Use SSM." OFF)
@@ -107,6 +156,8 @@ if(NA_USE_MPI)
     message(STATUS "MPI include directory: ${MPI_INCLUDE_PATH}")
     set(NA_HAS_MPI 1)
     set(NA_PLUGINS ${NA_PLUGINS} mpi)
+    set(NA_MPI_TESTING_DISTRIBUTED 1 CACHE INTERNAL "" FORCE)
+ 
     include_directories(${MPI_INCLUDE_PATH})
     set(NA_EXT_LIB_DEPENDENCIES
       ${NA_EXT_LIB_DEPENDENCIES}
@@ -141,10 +192,16 @@ endif()
 # CCI
 option(NA_USE_CCI "Use CCI." OFF)
 if(NA_USE_CCI)
-  find_package(CCI REQUIRED)
+  if (NOT TARGET cci)
+    find_package(CCI REQUIRED)
+  else()
+    find_package(CCI NO_MODULE REQUIRED)
+  endif()
   if(CCI_FOUND)
     message(STATUS "CCI include directory: ${CCI_INCLUDE_DIR}")
     set(NA_PLUGINS ${NA_PLUGINS} cci)
+    set(NA_CCI_VERBS_TESTING_DISTRIBUTED 1 CACHE INTERNAL "" FORCE)
+    set(NA_CCI_SM_TESTING_DISTRIBUTED 0 CACHE INTERNAL "" FORCE)
     set(NA_HAS_CCI 1)
     include_directories(${CCI_INCLUDE_DIR})
     set(NA_EXT_LIB_DEPENDENCIES
@@ -165,7 +222,6 @@ if(NA_USE_CCI)
     message(FATAL_ERROR "Could not find CCI.")
   endif()
 endif()
-
 
 #------------------------------------------------------------------------------
 # Configure module header files
@@ -225,6 +281,19 @@ if(NA_USE_CCI)
   )
 endif()
 
+if(NA_USE_VERBS)
+  set(NA_SRCS
+    ${NA_SRCS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/na_verbs.cc
+  )
+  if(NOT BGQ)
+      set(NA_SRCS
+        ${NA_SRCS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/MercuryController.cc
+      )
+  endif()
+endif()
+
 #----------------------------------------------------------------------------
 # Libraries
 #----------------------------------------------------------------------------
@@ -236,6 +305,12 @@ if(MERCURY_ENABLE_COVERAGE)
   set_coverage_flags(na)
 endif()
 
+if(NA_USE_VERBS)
+  target_link_libraries(na
+    rdmahelper
+    ${Boost_REGEX_LIBRARY_DEBUG}
+  )
+endif()
 #---------------------------------------------------------------------------
 # Add Target(s) to CMake Install
 #---------------------------------------------------------------------------

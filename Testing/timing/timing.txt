@@ -1,0 +1,38 @@
+10/11/2014
+mercury    : 6a7a4b349d6add17ff4a3ed5d43e3c8127606300
+rdmahelper : 920f4829247f268e3f49dcd4b5ab6855ceff3964
+
+Release
+No Logging 
+MPIEXEC_MAX_NUMPROCS 2 (1 client)
+ 
+bbpbg2:~/gcc/bgas/build/bgas$ ctest -R verbs
+Test project /gpfs/bbp.cscs.ch/home/biddisco/gcc/bgas/build/bgas
+      Start  1: mercury_rpc_verbs
+ 1/10 Test  #1: mercury_rpc_verbs .................   Passed    3.70 sec
+      Start  4: mercury_bulk_verbs
+ 2/10 Test  #4: mercury_bulk_verbs ................   Passed    2.83 sec
+      Start  7: mercury_bulk_seg_verbs
+ 3/10 Test  #7: mercury_bulk_seg_verbs ............   Passed    2.82 sec
+      Start 10: mercury_pipeline_verbs
+ 4/10 Test #10: mercury_pipeline_verbs ............   Passed    7.56 sec
+      Start 13: mercury_scale_verbs
+ 5/10 Test #13: mercury_scale_verbs ...............   Passed   11.87 sec
+      Start 16: mercury_posix_verbs
+ 6/10 Test #16: mercury_posix_verbs ...............   Passed    4.99 sec
+      Start 19: mercury_bulk_seg_verbs_extra
+ 7/10 Test #19: mercury_bulk_seg_verbs_extra ......***Timeout 240.04 sec
+      Start 22: mercury_bulk_seg_verbs_variable
+ 8/10 Test #22: mercury_bulk_seg_verbs_variable ...   Passed    5.04 sec
+      Start 25: mercury_BW_verbs
+ 9/10 Test #25: mercury_BW_verbs ..................   Passed   35.46 sec
+      Start 26: na_test_simple_verbs
+10/10 Test #26: na_test_simple_verbs ..............   Passed    2.87 sec
+
+90% tests passed, 1 tests failed out of 10
+
+Total Test time (real) = 317.24 sec
+
+The following tests FAILED:
+   19 - mercury_bulk_seg_verbs_extra (Timeout)
+Errors while running CTest

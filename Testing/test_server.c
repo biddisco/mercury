@@ -40,7 +40,7 @@ main(int argc, char *argv[])
         } while ((ret == HG_SUCCESS) && actual_count);
 
         if (hg_atomic_cas32(&hg_test_finalizing_count_g, 1, 1))
-            break;
+          break;
 
         ret = HG_Progress(hg_class, context, HG_MAX_IDLE_TIME);
     } while (ret == HG_SUCCESS);

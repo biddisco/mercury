@@ -40,6 +40,10 @@
 /****************/
 #define HG_TEST_CONFIG_FILE_NAME "/port.cfg"
 
+#ifdef NA_HAS_VERBS
+extern na_return_t na_verbs_accept(void *args);
+#endif
+
 /*******************/
 /* Local Variables */
 /*******************/
@@ -56,21 +60,22 @@ static unsigned int na_addr_table_size = 0;
 
 static const char *na_test_short_opt_g = "hc:p:sSVE";
 static const struct na_test_opt na_test_opt_g[] = {
-    { "help", no_arg, 'h'},
-    { "comm", require_arg, 'c' },
+    { "help",     no_arg,      'h'},
+    { "comm",     require_arg, 'c' },
     { "protocol", require_arg, 'p' },
-    { "static", no_arg, 's' },
-//    { "device", require_arg, 'd' },
-//    { "iface", require_arg, 'i' }
-    { "self", no_arg, 'S' },
-    { "variable", no_arg, 'V' },
-    { "extra", no_arg, 'E' },
+    { "static",   no_arg,      's' },
+    { "device",   require_arg, 'd' },
+    { "iface",    require_arg, 'i' },
+    { "self",     no_arg,      'S' },
+    { "variable", no_arg,      'V' },
+    { "extra",    no_arg,      'E' },
     { NULL, 0, '\0' } /* Must add this at the end */
 };
 
 static na_bool_t na_test_use_mpi_g = NA_FALSE;
 static na_bool_t na_test_use_cci_g = NA_FALSE;
 static na_bool_t na_test_use_static_mpi_g = NA_FALSE;
+static na_bool_t na_test_use_verbs_g = NA_FALSE;
 na_bool_t na_test_use_self_g = NA_FALSE;
 na_bool_t na_test_use_variable_g = NA_FALSE;
 na_bool_t na_test_use_extra_g = NA_FALSE;
@@ -90,7 +95,7 @@ static void
 na_test_usage(const char *execname);
 
 static const char *
-na_test_gen_config(int argc, char *argv[]);
+na_test_gen_config(int argc, char *argv[], unsigned int port);
 
 static void
 na_test_set_config(const char *addr_name);
@@ -112,7 +117,7 @@ na_test_usage(const char *execname)
     printf("  OPTIONS\n");
     printf("     -h,   --help         Print a usage message and exit\n");
     printf("     -c,   --comm         Select NA plugin\n"
-           "                          NA plugins: bmi, mpi, ssm\n");
+           "                          NA plugins: bmi, mpi, ssm, verbs\n");
     printf("     -p,   --protocol     Select plugin protocol\n"
            "                          Available protocols: tcp, ib\n");
 }
@@ -190,15 +195,17 @@ na_test_mpi_finalize(void)
 
 /*---------------------------------------------------------------------------*/
 static const char *
-na_test_gen_config(int argc, char *argv[])
+na_test_gen_config(int argc, char *argv[], unsigned int port)
 {
     char *na_class_name = NULL;
     char *na_protocol_name = NULL;
+    char *na_test_device = NULL;
+    char *na_test_iface = NULL;
     static char info_string[NA_TEST_MAX_ADDR_NAME];
     char na_hostname[NA_TEST_MAX_ADDR_NAME];
-    unsigned int na_port = 22222;
     char *info_string_ptr = info_string;
     int opt;
+    unsigned int na_port = port;
 
     if (argc < 2) {
         na_test_usage(argv[0]);
@@ -218,6 +225,11 @@ na_test_gen_config(int argc, char *argv[])
                     na_test_use_mpi_g = NA_TRUE;
                 if (strcmp("cci", na_class_name) == 0)
                     na_test_use_cci_g = NA_TRUE;
+                if (strcmp("verbs", na_class_name) == 0) {
+                  if (na_protocol_name) free(na_protocol_name);
+                  na_protocol_name = strdup("rdma");
+                  na_test_use_verbs_g = NA_TRUE;
+                }
                 break;
             case 'p':
                 /* NA protocol name */
@@ -237,6 +249,12 @@ na_test_gen_config(int argc, char *argv[])
             case 'E':
                 na_test_use_extra_g = NA_TRUE;
                 break;
+            case 'd':
+                na_test_device = strdup(na_test_opt_arg_g);
+                break;
+            case 'i':
+                na_test_iface = strdup(na_test_opt_arg_g);
+                break;
             default:
                 break;
         }
@@ -248,18 +266,35 @@ na_test_gen_config(int argc, char *argv[])
     if (na_class_name)
         info_string_ptr += sprintf(info_string_ptr, "%s+", na_class_name);
 
-    /* Use default if nothing specified */
+    /* Use default protocol if nothing specified */
     na_protocol_name = (na_protocol_name) ? na_protocol_name : strdup("tcp");
     info_string_ptr += sprintf(info_string_ptr, "%s", na_protocol_name);
 
+    if (na_test_device) {
+      info_string_ptr += sprintf(info_string_ptr, "@%s", na_test_device);
+    }
+    if (na_test_iface) {
+      info_string_ptr += sprintf(info_string_ptr, "/%s", na_test_iface);
+    }
     /* Generate a port number depending on server rank */
     na_port += na_test_comm_rank_g;
-    na_test_gethostname(na_hostname, NA_TEST_MAX_ADDR_NAME);
-    sprintf(info_string_ptr, "://%s:%d", na_test_getaddrinfo(na_hostname),
-            na_port);
-
+    if (strcmp("verbs", na_class_name) == 0) {
+#ifdef NA_HAS_VERBS
+      NA_VERBS_Get_rdma_device_address(na_test_device, na_test_iface, na_hostname);
+      sprintf(info_string_ptr, "://%s:%d", na_test_getaddrinfo(na_hostname),
+              na_port);
+      printf("info string generated %s\n",info_string);
+#endif
+    }
+    else {
+      na_test_gethostname(na_hostname, NA_TEST_MAX_ADDR_NAME);
+      sprintf(info_string_ptr, "://%s:%d", na_test_getaddrinfo(na_hostname),
+              na_port);
+    }
     free(na_class_name);
     free(na_protocol_name);
+    free(na_test_device);
+    free(na_test_iface);
     return info_string;
 }
 
@@ -286,9 +321,12 @@ na_test_set_config(const char *addr_name)
     na_addr_table_size = na_test_comm_size_g;
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
-    for (i = 0; i < na_test_comm_size_g; i++) {
-        MPI_Bcast(na_addr_table[i], MPI_MAX_PORT_NAME, MPI_BYTE, i,
-                na_test_comm_g);
+
+    if (na_test_use_mpi_g) {
+        for (i = 0; i < na_test_comm_size_g; i++) {
+            MPI_Bcast(na_addr_table[i], MPI_MAX_PORT_NAME, MPI_BYTE, i,
+                    na_test_comm_g);
+        }
     }
 #endif
 
@@ -345,7 +383,8 @@ na_test_get_config(char *addr_name, na_size_t len)
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
     /* Broadcast port name */
-    MPI_Bcast(config_addr_name, NA_TEST_MAX_ADDR_NAME, MPI_BYTE, 0,
+    if (na_test_use_mpi_g)
+      MPI_Bcast(config_addr_name, NA_TEST_MAX_ADDR_NAME, MPI_BYTE, 0,
             na_test_comm_g);
 #endif
 
@@ -411,8 +450,8 @@ na_test_getaddrinfo(const char *hostname)
             break;
     }
 
-done:
     freeaddrinfo(result);
+done:
 #ifdef _WIN32
     WSACleanup();
 #endif
@@ -427,12 +466,13 @@ NA_Test_client_init(int argc, char *argv[], char *addr_name,
     const char *info_string = NULL;
     na_class_t *na_class = NULL;
 
-    info_string = na_test_gen_config(argc, argv);
+    info_string = na_test_gen_config(argc, argv, 22222);
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
     /* Test run in parallel using mpirun so must intialize MPI to get
      * basic setup info etc */
-    na_test_mpi_init(NA_FALSE);
+    if (na_test_use_mpi_g)
+        na_test_mpi_init(NA_FALSE);
 #endif
 
     na_class = NA_Initialize(info_string, NA_FALSE);
@@ -462,15 +502,25 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
     na_class_t *na_class = NULL;
     const char *info_string = NULL;
 
-    info_string = na_test_gen_config(argc, argv);
+    info_string = na_test_gen_config(argc, argv, 22222);
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
     /* Test run in parallel using mpirun so must intialize MPI to get
      * basic setup info etc */
-    na_test_mpi_init(NA_TRUE);
+    if (na_test_use_mpi_g)
+        na_test_mpi_init(NA_TRUE);
 #endif
 
     na_class = NA_Initialize(info_string, NA_TRUE);
+
+#ifdef NA_HAS_VERBS
+    unsigned int port = na_verbs_get_port(na_class);
+    char *colon = strrchr(info_string,':');
+    sprintf(colon+1, "%d", port);
+    printf("info string is now %s\n\n", info_string);
+#endif
+
+    printf("finished NA_Initialize CONFIG with %s\n\n",info_string);
 
 #ifdef NA_HAS_MPI
     if (na_test_use_mpi_g) {
@@ -487,6 +537,7 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
         /* Gather strings and write config */
         na_test_set_config(info_string);
     }
+    printf("finished NA_Initialize CONFIG with %s\n\n",info_string);
 
     /* As many entries in addr table as number of server ranks */
     if (addr_table_size) *addr_table_size = na_addr_table_size;
@@ -495,7 +546,7 @@ NA_Test_server_init(int argc, char *argv[], na_bool_t print_ready,
     if (addr_table) *addr_table = na_addr_table;
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
-    if (max_number_of_peers) *max_number_of_peers = MPIEXEC_MAX_NUMPROCS;
+    if (max_number_of_peers) *max_number_of_peers = MPI_NUM_CLIENTS;
 #else
     if (max_number_of_peers) *max_number_of_peers = 1;
 #endif
@@ -532,7 +583,8 @@ NA_Test_finalize(na_class_t *na_class)
     }
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
-    na_test_mpi_finalize();
+    if (na_test_use_mpi_g)
+        na_test_mpi_finalize();
 #endif
 
 done:
@@ -544,6 +596,7 @@ void
 NA_Test_barrier(void)
 {
 #ifdef MERCURY_HAS_PARALLEL_TESTING
-    MPI_Barrier(na_test_comm_g);
+    if (na_test_use_mpi_g)
+        MPI_Barrier(na_test_comm_g);
 #endif
 }

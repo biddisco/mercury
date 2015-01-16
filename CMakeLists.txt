@@ -15,7 +15,7 @@ foreach(p
 endforeach()
 
 foreach(p
-    CMP0017
+    CMP0017 # Disable : Prefer files from the CMake module directory when including from there
   )
   if(POLICY ${p})
     cmake_policy(SET ${p} OLD)
@@ -218,11 +218,11 @@ endif()
 # Testing
 #-----------------------------------------------------------------------------
 option(BUILD_TESTING "Build testing." OFF)
-if(NOT MERCURY_EXTERNALLY_CONFIGURED AND BUILD_TESTING)
+#if(NOT MERCURY_EXTERNALLY_CONFIGURED AND BUILD_TESTING)
   enable_testing()
   include(CTest)
   add_subdirectory(Testing)
-endif()
+#endif()
 
 #-----------------------------------------------------------------------------
 # Configure the config.cmake file for the build directory

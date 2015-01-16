@@ -1,0 +1,8 @@
+build*
+*.old
+*.orig
+*.original
+*.gz
+*.tgz
+*.out
+.ptp-sync-folder

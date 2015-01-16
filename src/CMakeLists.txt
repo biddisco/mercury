@@ -194,14 +194,16 @@ install(
 #-----------------------------------------------------------------------------
 # Add Target(s) to CMake Install for import into other projects
 #-----------------------------------------------------------------------------
-install(
-  EXPORT
-    ${MERCURY_EXPORTED_TARGETS}
-  DESTINATION
-    ${MERCURY_INSTALL_DATA_DIR}/cmake/mercury
-  FILE
-    ${MERCURY_EXPORTED_TARGETS}.cmake
-)
+if(NOT MERCURY_EXTERNALLY_CONFIGURED)
+  install(
+    EXPORT
+      ${MERCURY_EXPORTED_TARGETS}
+    DESTINATION
+      ${MERCURY_INSTALL_DATA_DIR}/cmake/mercury
+    FILE
+      ${MERCURY_EXPORTED_TARGETS}.cmake
+  )
+endif()
 
 #-----------------------------------------------------------------------------
 # Export all exported targets to the build tree for use by parent project

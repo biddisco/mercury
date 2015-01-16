@@ -103,6 +103,9 @@ extern na_class_t na_ssm_class_g;
 #ifdef NA_HAS_CCI
 extern na_class_t na_cci_class_g;
 #endif
+#ifdef NA_HAS_VERBS
+extern na_class_t na_verbs_class_g;
+#endif
 
 static const na_class_t *na_class_table[] = {
 #ifdef NA_HAS_BMI
@@ -116,6 +119,9 @@ static const na_class_t *na_class_table[] = {
 #endif
 #ifdef NA_HAS_CCI
     &na_cci_class_g,
+#endif
+#ifdef NA_HAS_VERBS
+    &na_verbs_class_g,
 #endif
     NULL
 };
@@ -157,6 +163,7 @@ na_info_parse(const char *info_string, struct na_info **na_info_ptr)
      * Strings can be of the format:
      *   tcp://localhost:3344
      *   ssm+tcp://localhost:3344
+     *   rdma@mlx4_0/ib0://10.65.0.0:3344
      */
 
     /* Get first part of string (i.e., class_name+protocol) */
