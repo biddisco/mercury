@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013-2014 Argonne National Laboratory, Department of Energy,
- *                    UChicago Argonne, LLC and The HDF Group.
+ *�������������������������������������� UChicago Argonne, LLC and The HDF Group.
  * All rights reserved.
  *
  * The full copyright notice, including terms governing use, modification,
@@ -28,7 +28,7 @@
 /****************/
 /* Local Macros */
 /****************/
-#define HG_MAX_UNEXPECTED_RECV 256 /* TODO Variable */
+#define HG_MAX_UNEXPECTED_RECV 8 /* TODO Variable */
 
 /* Convert value to string */
 #define HG_ERROR_STRING_MACRO(def, value, string) \
