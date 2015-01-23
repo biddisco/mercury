@@ -466,6 +466,7 @@ NA_Test_client_init(int argc, char *argv[], char *addr_name,
     const char *info_string = NULL;
     na_class_t *na_class = NULL;
 
+    usleep(1000000);
     info_string = na_test_gen_config(argc, argv, 22222);
 
 #ifdef MERCURY_HAS_PARALLEL_TESTING
