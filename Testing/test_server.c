@@ -28,6 +28,7 @@ main(int argc, char *argv[])
     hg_context_t *context = NULL;
     unsigned int number_of_peers;
     hg_return_t ret = HG_SUCCESS;
+    int num_clients = MPI_NUM_CLIENTS;
 
     hg_class = HG_Test_server_init(argc, argv, NULL, NULL,
             &number_of_peers, &context);
@@ -39,8 +40,9 @@ main(int argc, char *argv[])
             ret = HG_Trigger(hg_class, context, 0, 1, &actual_count);
         } while ((ret == HG_SUCCESS) && actual_count);
 
-        if (hg_atomic_cas32(&hg_test_finalizing_count_g, 1, 1))
+        if (hg_atomic_cas32(&hg_test_finalizing_count_g, num_clients, num_clients)) {
           break;
+        }
 
         ret = HG_Progress(hg_class, context, HG_MAX_IDLE_TIME);
     } while (ret == HG_SUCCESS);
