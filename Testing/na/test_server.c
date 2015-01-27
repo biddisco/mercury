@@ -286,6 +286,11 @@ int main(int argc, char *argv[])
                 &msg_unexpected_recv_cb, &params, params.recv_buf,
                 params.recv_buf_len, NA_OP_ID_IGNORE);
 
+    }
+
+    for (peer = 0; peer < number_of_peers; peer++) {
+        unsigned int i;
+
         while(!test_done_g) {
             na_return_t trigger_ret;
             unsigned int actual_count = 0;
