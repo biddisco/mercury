@@ -34,6 +34,7 @@ namespace CSCS_user_message {
 
   const uint8_t ExpectedMessage   = 110;
   const uint8_t UnexpectedMessage = 111;
+  const uint8_t TextMessage = 02;
 
 };
 #endif

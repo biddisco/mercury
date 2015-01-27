@@ -88,7 +88,7 @@ struct na_verbs_addr {
 
 };
 
-typedef std::map<uint64_t, std::tuple<na_verbs_op_id*, int> > OperationMap;
+typedef std::map<uint64_t, na_verbs_op_id*> OperationMap;
 
 struct na_verbs_private_data
 {
@@ -107,9 +107,9 @@ struct na_verbs_private_data
     RdmaClientPtr            client;
     // store na_verbs_op_id objects using a map referenced by verbs work request ID
     OperationMap WorkRequestCompletionMap;
+
     // store na_verbs_op_id for unexpected receives
-    std::queue<na_verbs_op_id*>  UnexpectedOps;
-    std::queue<na_verbs_op_id*>  ExpectedOps;
+    std::queue<na_verbs_op_id*>   UnexpectedOps;
     //
     char *listen_addr; /* Server listen_addr */
 
@@ -127,7 +127,7 @@ struct PrintMap : public std::unary_function<T, void>
 
     void operator()(const T& elem) const
     {
-      os << std::setfill('0') << std::setw(12) << std::hex << elem.first << ", " << std::get<0>(elem.second) << ", " << std::get<1>(elem.second) << "\n";
+      os << std::setfill('0') << std::setw(12) << std::hex << elem.first << ", " << elem.second << "\n";
     }
 };
 /*---------------------------------------------------------------------------*/
@@ -141,7 +141,6 @@ unsigned int na_verbs_get_port(na_class_t *na_class)
   FUNC_START_DEBUG_MSG
   na_verbs_private_data *pd = NA_VERBS_PRIVATE_DATA(na_class);
 #ifndef __BGQ__
-std::cout << "pd and controller " << pd << " " << std::endl;
   int na_test_verbs_port_g = pd->controller->getPort();
   std::cout << na_test_verbs_port_g << std::endl;
 #else
@@ -368,12 +367,11 @@ extern "C" const na_class_t na_verbs_class_g = {
 
 /*---------------------------------------------------------------------------*/
 #ifndef __BGQ__
-  na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel);
   na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel);
+  na_return_t empty_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel);
   int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd, RdmaClientPtr client);
 #else
-  int         poll_cq_non_blocking(na_verbs_private_data *pd);
-  na_return_t poll_cq(na_verbs_private_data *pd);
+  na_return_t poll_cq_non_blocking(na_verbs_private_data *pd);
   int handle_verbs_completion(Kernel_RDMAWorkCompletion_t *completion, na_verbs_private_data *pd, RdmaClientPtr client);
 #endif
 /*---------------------------------------------------------------------------*/
@@ -531,7 +529,6 @@ na_verbs_finalize(na_class_t *na_class)
         poll_cq_non_blocking(pd);
 #endif
       }
-      sleep(1);
       LOG_DEBUG_MSG("Calling disconnect");
       pd->client->disconnect(true);
       na_return_t val = NA_SUCCESS;
@@ -551,7 +548,7 @@ na_verbs_finalize(na_class_t *na_class)
   }
   // release other structures
   delete (struct na_verbs_private_data*)(na_class->private_data);
-  free(na_class);
+//  free(na_class);
 
   FUNC_END_DEBUG_MSG
   return ret;
@@ -674,17 +671,17 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
   // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
   pd->client->makePeer(pd->domain, pd->completionQ);
-  pd->client->setMemoryPoold(_memoryPool);
+  pd->client->setMemoryPool(_memoryPool);
   pd->client->refill_preposts(2);
 #else
   LOG_DEBUG_MSG("(client) creating memory_pool");
   memory_poolPtr _memoryPool = std::make_shared<memory_pool>(pd->client->getFD(), 512, 2, 32);
-  pd->client->setMemoryPoold(_memoryPool);
+  pd->client->setMemoryPool(_memoryPool);
   // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
   pd->client->makePeer();
+  LOG_DEBUG_MSG("refilling preposts ");
   pd->client->refill_preposts(2);
-
 #endif
 
   LOG_DEBUG_MSG("(client) finished connect ");
@@ -934,7 +931,7 @@ static na_return_t na_verbs_msg_send(
     //
     // add wr_id to our map for checking on completions later
     //
-    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = std::make_tuple(na_verbs_op_id, OPCODE_SEND);
+    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for send added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
     std::for_each(
@@ -1063,38 +1060,21 @@ static na_return_t na_verbs_msg_recv(
     client = pd->client;
   }
   //
-  // post receive : use a standard bgcios message structure
+  // post receive : use a standard message structure
   //
   {
     if (expected_flag==CSCS_user_message::UnexpectedMessage) {
 #ifndef __BGQ__
-      std::cout << "**** \npushing an unexpected op  \n" << pd->controller->num_clients() << std::endl;
+      std::cout << "pushing an unexpected op \n" << pd->controller->num_clients() << std::endl;
       pd->UnexpectedOps.push(na_verbs_op_id);
 #else
       throw std::string("BGQ Client should not be receiving unexpected messages");
 #endif
     }
     else {
-      // when an expected message is posted by the user API, we must assign it
-      // to the first unclaimed receive preposted (because if multiple expected receives
-      // are posted, they must form an orderly queue
-      std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
-      na_verbs_op_id->wr_id = client->popReceive();
-      LOG_DEBUG_MSG("RECV (ExpectedMessage) TAG value " << tag << " assigned to wr_id " << na_verbs_op_id->wr_id);
-      //
-      // add wr_id to our map for checking on completions later
-      //
-      pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = std::make_tuple(na_verbs_op_id, OPCODE_RECV);
-      std::for_each(
-          pd->WorkRequestCompletionMap.begin(),
-          pd->WorkRequestCompletionMap.end(),
-          PrintMap<OperationMap::value_type>(std::cout)
-      );
-      LOG_DEBUG_MSG("wr_id for recv expected added to Receive completion map "
-          << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id
-          << " Entries " << pd->WorkRequestCompletionMap.size());
+      std::cout << "pushing an expected op \n" << std::endl;
+      client->ExpectedOps.push(na_verbs_op_id);
     }
-
   }
 
   // Assign op_id
@@ -1336,6 +1316,7 @@ na_verbs_put(
   LOG_DEBUG_MSG("Mem remote Handle : address " << remote->address << " length " << remote->bytes << " key " << remote->memkey);
   {
     std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
+
     client->postRdmaWrite(rdma_put_ID,
         remote->memkey, (uint64_t)remote->address + remote_offset,
         local->memkey, (uint64_t)local->address + local_offset,
@@ -1360,7 +1341,7 @@ na_verbs_put(
     // add wr_id to our map for checking on completions later
     //
     std::cout << "Adding put wr_id to completion map " << na_verbs_op_id->wr_id << "\n";
-    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = std::make_tuple(na_verbs_op_id, OPCODE_PUT);
+    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for put added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
     std::for_each(
@@ -1451,7 +1432,7 @@ na_verbs_get(
     //
     // add wr_id to our map for checking on completions later
     //
-    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = std::make_tuple(na_verbs_op_id, OPCODE_GET);
+    pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for get added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
     std::for_each(
@@ -1491,36 +1472,22 @@ static na_return_t na_verbs_progress(na_class_t *na_class,
   while (!done) {
     if (pd->server) {
 #ifndef __BGQ__
-//      pd->controller->eventMonitor(0);
-//      if (pd->controller->isTerminated()) {
-//        ret = poll_cq_non_blocking(pd, pd->controller->GetCompletionChannel());
-//        std::cout << "Non blocking Poll because we are terminated " << ret << std::endl;
-//      } else {
-//        LOG_DEBUG_MSG("Poll completion and event channel");
         pd->controller->eventMonitor(0);
-//        ret = poll_cq(pd, pd->controller->GetCompletionChannel());
-//      }
-
-      // Monitor for events on all of the channels until told to stop.
-      //    LOG_DEBUG_MSG("Poll eventmonitor");
-      //pd->controller->eventMonitor(0);
 #endif
     }
     else
     {
       // LOG_DEBUG_MSG("starting to poll CQ on client with timeout " << timeout);
 #ifndef __BGQ__
-      ret = poll_cq(pd, pd->completionChannel);
+      ret = empty_cq(pd, pd->completionChannel);
 #else
-      ret = poll_cq(pd);
+      ret = poll_cq_non_blocking(pd);
 #endif
-//      ret = poll_cq_non_blocking(pd, pd->completionChannel);
     }
     auto t2 = std::chrono::high_resolution_clock::now();
     auto msec = std::chrono::duration_cast < std::chrono::milliseconds > (t2 - start_time).count();
-    // if (ret==NA_SUCCESS) done = true;
-    // if (msec>timeout) done=true;
-    done = true;
+    if (ret==NA_SUCCESS) done = true;
+    if (msec>timeout) done=true;
   }
   done:
 //  FUNC_END_DEBUG_MSG
@@ -1597,6 +1564,7 @@ na_verbs_complete(struct na_verbs_op_id *na_verbs_op_id)
       na_verbs_op_id->info.get.rma_info = NULL;
       break;
     default:
+      LOG_ERROR_MSG("Operation not supported " << na_verbs_op_id->type);
       NA_LOG_ERROR("Operation not supported");
       ret = NA_INVALID_PARAM;
       break;
@@ -1634,10 +1602,12 @@ na_verbs_cancel(na_class_t NA_UNUSED *na_class, na_context_t *context,
   FUNC_END_DEBUG_MSG
   return ret;
 }
-/*---------------------------------------------------------------------------*/
 
 /*---------------------------------------------------------------------------*/
 #ifndef __BGQ__
+/*---------------------------------------------------------------------------*/
+/* Standard IBverbs method for polling                                       */
+/*---------------------------------------------------------------------------*/
 na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
 {
   const int compChannel  = 0;
@@ -1652,18 +1622,15 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChanne
 
   int rc = poll(pollInfo, 1, polltimeout);
 
-  // There was no data so try again.
-  if (rc == 0)
-  {
+  // There was no data so quit
+  if (rc == 0) {
     return NA_SUCCESS;
   }
 
-  // There was an error so log the failure and try again.
-  if (rc == -1)
-  {
+  // There was an error so log the failure
+  if (rc == -1) {
     int err = errno;
-    if (err == EINTR)
-    {
+    if (err == EINTR) {
       LOG_CIOS_TRACE_MSG("poll returned EINTR, continuing ..");
       return NA_SUCCESS;
     }
@@ -1671,18 +1638,17 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChanne
     return NA_PROTOCOL_ERROR;
   }
 
-  // Check for an event on the completion channel.
-  if (pollInfo[compChannel].revents & POLLIN)
-  {
+  // There is data, get it from the completion channel.
+  if (pollInfo[compChannel].revents & POLLIN) {
     LOG_CIOS_TRACE_MSG("input event available on data channel");
-    ret = poll_cq(pd, channel);
+    ret = empty_cq(pd, channel);
     pollInfo[compChannel].revents = 0;
   }
   return ret;
 }
 
 /*---------------------------------------------------------------------------*/
-na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
+na_return_t empty_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
 {
   struct ibv_cq *cq;
   struct ibv_wc  completion;
@@ -1713,8 +1679,7 @@ na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
     // retrieve all completions one by one and trigger their completion handlers
     //
     while (!completions) {
-      while (ibv_poll_cq(cq, 1, &completion))
-      {
+      while (ibv_poll_cq(cq, 1, &completion)) {
         completions = true;
         LOG_DEBUG_MSG("Poll CQ completing for work request " << completion.wr_id);
         completion_function(&completion, pd->client);
@@ -1725,9 +1690,95 @@ na_return_t poll_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel)
   FUNC_END_DEBUG_MSG
   return completions ? NA_SUCCESS : NA_PROTOCOL_ERROR;
 }
+
+/*---------------------------------------------------------------------------*/
+#else
+/*---------------------------------------------------------------------------*/
+/* BGQ compute node polling, uses Kernel_RDMA methods                        */
+/* This is only used for clients as we do not yet support a server on CNK    */
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
+#define IBV_WC_SUCCESS 0
+#define IBV_WC_SEND    2
+#define IBV_WC_RECV    1
+#define ibv_wc_status_str(x) " "
+#define LOG_CIOS_TRACE_MSG(x) " "
+/*---------------------------------------------------------------------------*/
+na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
+{
+//  FUNC_START_DEBUG_MSG
+  na_return_t ret = NA_SUCCESS;
+
+  RdmaClientPtr client = pd->client;
+  int RDMA_fd = client->getFD();
+
+  Kernel_RDMAWorkCompletion_t WorkCompletionList[8];
+  memset(WorkCompletionList, 0, sizeof(Kernel_RDMAWorkCompletion_t)*8);
+
+  int num_entries = 8;
+  int success = Kernel_RDMAPollCQ(RDMA_fd, &num_entries, WorkCompletionList);
+
+  if (success!=0) {
+    LOG_ERROR_MSG("error polling : " << bgcios::errorString(success));
+    ret = NA_PROTOCOL_ERROR;
+  }
+  else if (num_entries==0) {
+    ret = NA_SUCCESS;
+  }
+  else if (num_entries>0) {
+    //
+    // retrieve all completions one by one and trigger their completion handlers
+    //
+    int entry = 0;
+    while (entry<num_entries) {
+      LOG_DEBUG_MSG("Triggering handler for work request " << entry << " of " << num_entries << " "
+          << "\nbuffer\t " << WorkCompletionList[entry].buf
+          << "\nlen   \t " << WorkCompletionList[entry].len
+          << "\nopcode   \t " << WorkCompletionList[entry].opcode
+          << "\nstatus   \t " << WorkCompletionList[entry].status
+          << "\nflags   \t " << WorkCompletionList[entry].flags
+          << "\nreserved   \t " << WorkCompletionList[entry].reserved
+      );
+      if (WorkCompletionList[entry].buf!=NULL) {
+        int result = handle_verbs_completion(&WorkCompletionList[entry], pd, pd->client);
+        if (result != NA_SUCCESS) { ret = NA_PROTOCOL_ERROR; }
+      }
+      entry++;
+    }
+  }
+//  FUNC_END_DEBUG_MSG
+  return ret;
+}
+
+/*---------------------------------------------------------------------------*/
+/*
+na_return_t empty_cq(na_verbs_private_data *pd)
+{
+  FUNC_START_DEBUG_MSG
+  int num = 0;
+  while (num==0) {
+    num = poll_cq_non_blocking(pd);
+    // std::this_thread::
+    usleep(1000);
+  }
+  FUNC_END_DEBUG_MSG
+  if (num<0) return NA_PROTOCOL_ERROR;
+  return NA_SUCCESS;
+}
+*/
+/*---------------------------------------------------------------------------*/
+#endif
+/*---------------------------------------------------------------------------*/
+
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+#ifdef __BGQ__
+int handle_verbs_completion(Kernel_RDMAWorkCompletion_t *completion, na_verbs_private_data *pd, RdmaClientPtr client)
+
+#else
 int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd, RdmaClientPtr client)
+
+#endif
 {
   FUNC_START_DEBUG_MSG
   RdmaMemoryRegion *region = nullptr;
@@ -1738,7 +1789,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     LOG_ERROR_MSG("failed work completion, status '" << ibv_wc_status_str(completion->status) << "' for operation "
         << RdmaCompletionQueue::wc_opcode_str(completion->opcode) << " " << completion->opcode );
 #else
-    LOG_ERROR_MSG("failed work completion, status '" << "' for operation " << completion->opcode );
+    LOG_ERROR_MSG("failed work completion, " << completion->opcode );
 #endif
     return NA_PROTOCOL_ERROR;
   }
@@ -1749,33 +1800,53 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
   {
     case IBV_WC_SEND:
     {
+#ifndef __BGQ__
       LOG_CIOS_TRACE_MSG("send operation completed successfully for queue pair " << completion->qp_num);
       region = (RdmaMemoryRegion *)completion->wr_id;
+#else
+      // we do not know which region (wr_id) to use, so we must scan them manually because
+      // the CNK kernel_ rdma routines use the internal buffer as reference
+      LOG_DEBUG_MSG("Begin Scan section ");
+      for (auto wc : pd->WorkRequestCompletionMap) {
+        RdmaMemoryRegion *_region = (RdmaMemoryRegion *)(wc.first);
+        LOG_DEBUG_MSG("Scanning a region " << std::setfill('0') << std::setw(12) << std::hex << _region);
+        if ((void*)(completion->buf) == _region->getAddress()) {
+          region = _region;
+          LOG_DEBUG_MSG("completion->buf matches " << std::setfill('0') << std::setw(12) << std::hex << _region->getAddress());
+          break;
+        }
+      }
+#endif
       break;
     }
 
     case IBV_WC_RECV:
     {
-      LOG_CIOS_TRACE_MSG("receive operation completed successfully for queue pair " << completion->qp_num << " (received " << std::dec << completion->byte_len << " bytes)");
+      uint64_t wr_id_ = client->popReceive();
+      region = (RdmaMemoryRegion*)(wr_id_);
+#ifdef __BGQ__
+      if (completion->buf != region->getAddress()) {
+        LOG_ERROR_MSG("Actual completion is " << completion->buf << " but expected " << region->getAddress());
+#else
+      if (completion->wr_id != wr_id_) {
+        LOG_ERROR_MSG("Actual completion id is " << completion->wr_id << " but expected " << wr_id_);
+#endif
+        throw std::string("Work request Id mismatch");
+      }
 
       // Handle the message.
-      region = (RdmaMemoryRegion *)completion->wr_id;
-      LOG_DEBUG_MSG("Region address is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
+      LOG_DEBUG_MSG("Region pointer is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
       CSCS_user_message::UserRDMA_message *msg = (CSCS_user_message::UserRDMA_message *)(region->getAddress());
       na_verbs_op_id                    *op_id = NULL;
       struct na_verbs_addr      *na_verbs_addr = NULL;
       switch (msg->header.expected)
       {
+        case CSCS_user_message::TextMessage:
+          std::cout << msg->MessageData << std::endl;
+          break;
         case CSCS_user_message::UnexpectedMessage:
         case CSCS_user_message::ExpectedMessage:
           if (msg->header.expected==CSCS_user_message::UnexpectedMessage) {
-            {
-              uint64_t wr_id_ = client->popReceive();
-              if (completion->wr_id!=wr_id_) {
-                LOG_ERROR_MSG("Actual completion id is " << completion->wr_id << " but expected " << wr_id_);
-                throw std::string("Work request Id mismatch");
-              }
-            }
             LOG_DEBUG_MSG("received UnexpectedMessage, fetching unexpected receive");
             if (pd->UnexpectedOps.size()==0) {
               throw (std::string("Message received before receive was posted"));
@@ -1784,7 +1855,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             op_id = pd->UnexpectedOps.front();
             pd->UnexpectedOps.pop();
             // put this into the map where it will be fetched below
-            pd->WorkRequestCompletionMap[completion->wr_id] = std::make_tuple(op_id, OPCODE_RECV);
+            pd->WorkRequestCompletionMap[wr_id_] = op_id;
             std::for_each(
                 pd->WorkRequestCompletionMap.begin(),
                 pd->WorkRequestCompletionMap.end(),
@@ -1793,18 +1864,19 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           }
           else {
             LOG_DEBUG_MSG("received ExpectedMessage, fetching receive");
+            if (client->ExpectedOps.size()==0) {
+              throw (std::string("Message received before receive was posted"));
+            }
             //
-            OperationMap::iterator entry = pd->WorkRequestCompletionMap.find(completion->wr_id);
-            if (entry!=pd->WorkRequestCompletionMap.end()) {
-              LOG_DEBUG_MSG("Found the work request ID in the Receive TAG completion map "
-                  << std::setfill('0') << std::setw(12) << std::hex << completion->wr_id << " Entries " << pd->WorkRequestCompletionMap.size());
-              op_id = std::get<0>(entry->second);
-            }
-            else {
-              LOG_ERROR_MSG("Did not find completion " << completion->wr_id << " throwing exception instead ");
-              printf("Did not find completion %llu, throwing exception instead\n",completion->wr_id);
-              throw std::runtime_error("Failed to find verbs op_id in completion list");
-            }
+            op_id = client->ExpectedOps.front();
+            client->ExpectedOps.pop();
+            // put this into the map where it will be fetched below
+            pd->WorkRequestCompletionMap[wr_id_] = op_id;
+            std::for_each(
+                pd->WorkRequestCompletionMap.begin(),
+                pd->WorkRequestCompletionMap.end(),
+                PrintMap<OperationMap::value_type>(std::cout)
+            );
           }
           //
           // At this point we should have a valid op_id pointer
@@ -1827,20 +1899,21 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             if (!na_verbs_addr) {
               throw std::bad_alloc();
             }
+#ifndef __BGQ__
             LOG_DEBUG_MSG("filling na_addr during unexpected message - qp is " << completion->qp_num);
             na_verbs_addr->qp_id  = completion->qp_num;
+#endif
             op_id->verbs_addr     = na_verbs_addr;
           }
           break;
 
         default:
           printf("unsupported message type %d received from client \n", msg->header.expected);
-          // , msghdr->type,     bgcios::printHeader(*msghdr).c_str());
           break;
       }
       break;
     }
-
+#ifndef __BGQ__
     case IBV_WC_RDMA_READ:
     {
       LOG_CIOS_DEBUG_MSG("rdma read operation completed successfully for queue pair " << completion->qp_num);
@@ -1858,7 +1931,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       region = NULL;
       break;
     }
-
+#endif
     default:
     {
       LOG_ERROR_MSG("unsupported operation " << completion->opcode << " in work completion");
@@ -1866,7 +1939,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     }
   }
   na_return_t ret = NA_PROTOCOL_ERROR;
-  ret = on_completion_wr(pd, completion->wr_id);
+  ret = on_completion_wr(pd, (uint64_t)(region));
   if (region) {
    client->releaseRegion(region);
   }
@@ -1878,285 +1951,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
   FUNC_END_DEBUG_MSG
   return ret;
 }
-//---------------------------------------------------------------------------
-// BGQ version of poll and completion handler for Client only
-//---------------------------------------------------------------------------
-#else
-/*---------------------------------------------------------------------------*/
-int poll_cq_non_blocking(na_verbs_private_data *pd)
-{
-  FUNC_START_DEBUG_MSG
-
-  RdmaClientPtr client = pd->client;
-  int RDMA_fd = client->getFD();
-  int num_entries = 0;
-  Kernel_RDMAWorkCompletion_t WorkCompletionList[32]; // only using 1, but just in case
-  memset(WorkCompletionList, 0, sizeof(Kernel_RDMAWorkCompletion_t)*8);
-  int ret = 0;
-
-  int size = pd->WorkRequestCompletionMap.size();
-  if (size>32) {
-    throw std::string("wr space overflow : We only have space for 32 completions");
-  }
-  if (size==0) {
-    LOG_DEBUG_MSG("skipping poll as there are no work requests outstanding");
-    return 0;
-  }
-
-  for (OperationMap::iterator wc = pd->WorkRequestCompletionMap.begin(); wc!=pd->WorkRequestCompletionMap.end(); ++wc)
-  {
-//  for (auto &wc : pd->WorkRequestCompletionMap.) {
-    RdmaMemoryRegion *region = (RdmaMemoryRegion *)(wc->first);
-    WorkCompletionList[num_entries].buf = (void*)(region->getAddress());
-    WorkCompletionList[num_entries].len = 512;
-    WorkCompletionList[num_entries].opcode = std::get<1>(wc->second);
-    LOG_DEBUG_MSG("Filling data info for poll " << num_entries << " "
-        << "\nbuffer\t " << WorkCompletionList[num_entries].buf
-        << "\nlen   \t " << WorkCompletionList[num_entries].len
-        << "\nopcode   \t " << WorkCompletionList[num_entries].opcode
-        << "\nstatus   \t " << WorkCompletionList[num_entries].status
-        << "\nflags   \t " << WorkCompletionList[num_entries].flags
-        << "\nreserved   \t " << WorkCompletionList[num_entries].reserved
-    );
-//    num_entries++;
-//  }
-    num_entries = 1;
-
-    int success = Kernel_RDMAPollCQ(RDMA_fd, &num_entries, WorkCompletionList);
-
-    if (success!=0) {
-      LOG_ERROR_MSG("error polling : " << bgcios::errorString(success));
-      ret = -1;
-    }
-    else if (num_entries==0)
-    {
-      LOG_DEBUG_MSG("No work requests completed, sleeping");
-      //usleep(1000);
-      ret = 0;
-    }
-    else if (num_entries>0) {
-      //
-      // retrieve all completions one by one and trigger their completion handlers
-      //
-      ret = num_entries;
-      int entry = 0;
-      while (entry<num_entries) {
-        LOG_DEBUG_MSG("Triggering handler for work request " << entry << " of " << num_entries << " "
-            << "\nbuffer\t " << WorkCompletionList[entry].buf
-            << "\nlen   \t " << WorkCompletionList[entry].len
-            << "\nopcode   \t " << WorkCompletionList[entry].opcode
-            << "\nstatus   \t " << WorkCompletionList[entry].status
-            << "\nflags   \t " << WorkCompletionList[entry].flags
-            << "\nreserved   \t " << WorkCompletionList[entry].reserved
-        );
-        if (WorkCompletionList[entry].buf!=NULL) {
-          int result = handle_verbs_completion(&WorkCompletionList[entry], pd, pd->client);
-          if (result != NA_SUCCESS) { ret = -1; }
-        }
-        entry++;
-      }
-    }
-  }
-  FUNC_END_DEBUG_MSG
-  return ret;
-}
-/*---------------------------------------------------------------------------*/
-na_return_t poll_cq(na_verbs_private_data *pd)
-{
-  FUNC_START_DEBUG_MSG
-  int num = 0;
-  while (num==0) {
-    num = poll_cq_non_blocking(pd);
-    // std::this_thread::
-    usleep(1000);
-  }
-  FUNC_END_DEBUG_MSG
-  if (num<0) return NA_PROTOCOL_ERROR;
-  return NA_SUCCESS;
-}
-/*---------------------------------------------------------------------------*/
-#define IBV_WC_SUCCESS 0
-#define IBV_WC_SEND    2
-#define IBV_WC_RECV    1
-/*---------------------------------------------------------------------------*/
-int handle_verbs_completion(Kernel_RDMAWorkCompletion_t *completion, na_verbs_private_data *pd, RdmaClientPtr client)
-{
-  FUNC_START_DEBUG_MSG
-  RdmaMemoryRegion *region = nullptr;
-  int wc_q = 0;
-  uint64_t wr_id = 0;
-  (uint64_t)(completion->buf);
-  // we do not know which regio (wr_id) to use, so we must scan them manually because
-  // the CNK kernel_ rdma routines use the internal buffer as reference
-  for (auto wc : pd->WorkRequestCompletionMap) {
-    RdmaMemoryRegion *region = (RdmaMemoryRegion *)(wc.first);
-    if ((void*)(completion->buf) == region->getAddress()) {
-      wr_id = (uint64_t)(region);
-    }
-  }
-
-  // Check the status in the completion queue entry.
-  if (completion->status != IBV_WC_SUCCESS)
-  {
-    LOG_ERROR_MSG("failed work completion, status '" << "' for operation " << completion->opcode );
-    return NA_PROTOCOL_ERROR;
-  }
-
-  std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
-  //
-  if (completion->opcode==0 || completion->opcode>2) {
-    LOG_DEBUG_MSG("opcode was invalid, so finding the correct one");
-    if (pd->WorkRequestCompletionMap.find(wr_id)!=pd->WorkRequestCompletionMap.end()) {
-      LOG_DEBUG_MSG("Found the work request ID in the WR completion map "
-          << std::setfill('0') << std::setw(12) << std::hex << wr_id << " Entries " << pd->WorkRequestCompletionMap.size());
-      completion->opcode = std::get<1>(pd->WorkRequestCompletionMap[wr_id]);
-    }
-    else {
-      LOG_ERROR_MSG("Could not locate work request in WR completion map " << wr_id);
-      return 0;
-      // due to race conditions, it is possible for the thread to complete before the work request has been
-      // added to the completion map!
-    }
-  }
-  switch (completion->opcode)
-  {
-    case IBV_WC_SEND:
-    {
-//      int numRecv = client->decrementWaitingSend();
-//      LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
-      region = (RdmaMemoryRegion *)wr_id;
-      LOG_DEBUG_MSG("Region address is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
-      wc_q = 0;
-      break;
-    }
-
-    case IBV_WC_RECV:
-    {
-      // Handle the message.
-      region = (RdmaMemoryRegion *)wr_id;
-      LOG_DEBUG_MSG("Region address is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
-      bgcios::MessageHeader            *msghdr = (bgcios::MessageHeader *)region->getAddress();
-      CSCS_user_message::UserRDMA_message *msg = (CSCS_user_message::UserRDMA_message *)(msghdr);
-      na_verbs_op_id                    *op_id = NULL;
-      struct na_verbs_addr      *na_verbs_addr = NULL;
-
-      // decrement the counter we're tracking
-//      int numRecv = client->decrementWaitingRecv(
-//        msghdr->type==CSCS_user_message::ExpectedMessage
-//      );
-//      LOG_DEBUG_MSG("Client waiting recv counter decremented and is now " << numRecv)
-
-//      LOG_DEBUG_MSG("received " << (msghdr->type) << " from client " << bgcios::printHeader(*msghdr).c_str());
-      switch (msghdr->type)
-      {
-        case CSCS_user_message::UnexpectedMessage:
-        case CSCS_user_message::ExpectedMessage:
-          if (msghdr->type==CSCS_user_message::UnexpectedMessage) {
-            LOG_DEBUG_MSG("received UnexpectedMessage, fetching unexpected receive");
-            // for an unexpected message we must get the na_op_id to use for completion
-            if (pd->UnexpectedOps.size()>0) {
-              op_id = pd->UnexpectedOps.front();
-              pd->UnexpectedOps.pop_front();
-              // put this into the map where it will be fetched below : @todo tidy this
-              pd->WorkRequestCompletionMap[wr_id] = op_id;
-              wc_q = 0;
-            }
-            else {
-              LOG_WARN_MSG("Unexpected arrived before it has been posted - storing data until ready, wr_id = " << wr_id);
-              //
-              // The buffer and na_op_id have not been assigned because the connection was made and an unexpected
-              // receive has arrived before mercury server posted one.
-              // Allocate a temp na_op_id until the receive is posted when it must be copied
-              // into the real buffer that mercury sends in.
-              //
-              op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
-              if (!op_id) {
-                NA_LOG_ERROR("Could not allocate NA VERBS operation ID");
-                throw std::bad_alloc();
-              }
-              op_id->context               = 0;
-              op_id->type                  = NA_CB_RECV_UNEXPECTED;
-              op_id->callback              = 0;
-              op_id->arg                   = 0;
-              op_id->completed             = NA_TRUE;
-              op_id->info.recv.buf_size    = CSCS_UserMessageDataSize;
-              op_id->info.recv.buf         = malloc(CSCS_UserMessageDataSize);
-              op_id->info.recv.tag         = 0;
-              op_id->wr_id                 = wr_id;
-              //
-//              pd->EarlyUnexpectedOps.push_front(op_id);
-              wc_q = 2; // do not call completion at end of this function
-            }
-          }
-          else {
-            LOG_DEBUG_MSG("received ExpectedMessage, fetching receive");
-            //
-            if (pd->WorkRequestCompletionMap.find(wr_id)!=pd->WorkRequestCompletionMap.end()) {
-              LOG_DEBUG_MSG("Found the work request ID in the Receive TAG completion map "
-                  << std::setfill('0') << std::setw(12) << std::hex << wr_id << " Entries " << pd->WorkRequestCompletionMap.size());
-              op_id = std::get<0>(pd->WorkRequestCompletionMap[wr_id]);
-              wc_q = 0;
-            }
-            else {
-              printf("Did not find completion %llu, throwing exception instead\n",wr_id);
-              throw std::runtime_error("Failed to find verbs op_id in completion list");
-            }
-          }
-          //
-          // At this point we should have a valid op_id pointer
-          //
-          if (op_id->info.recv.buf_size<CSCS_UserMessageDataSize) {
-            throw std::runtime_error("Receive buffer was too small for unexpected message");
-          }
-          //
-          // Copy the contents of the message into the buffer given during the receive call
-          //
-          memcpy(op_id->info.recv.buf, msg->MessageData, CSCS_UserMessageDataSize);
-          op_id->info.recv.tag = msg->header2.tag;
-          LOG_DEBUG_MSG("RECEIVED TAG value " << op_id->info.recv.tag);
-
-          // unexpected messages need to tell mercury who sent them, so create an address object
-          if (msghdr->type==CSCS_user_message::UnexpectedMessage) {
-            // allocate the address information for storing details
-            // we will use with future traffic to this destination
-            na_verbs_addr = new struct na_verbs_addr();
-            if (!na_verbs_addr) {
-              throw std::bad_alloc();
-            }
-//            LOG_DEBUG_MSG("filling na_addr during unexpected message - qp is " << completion->qp_num);
-            na_verbs_addr->qp_id  = 0; // completion->qp_num;
-            op_id->verbs_addr     = na_verbs_addr;
-          }
-          break;
-
-        default:
-          printf("unsupported message type %d received from client %s\n", msghdr->type, bgcios::printHeader(*msghdr).c_str());
-          break;
-      }
-      break;
-    }
-
-    default:
-    {
-      LOG_ERROR_MSG("unsupported operation " << completion->opcode << " in work completion");
-      break;
-    }
-  }
-  na_return_t ret = NA_PROTOCOL_ERROR;
-  if (wc_q == 0) {
-    ret = on_completion_wr(pd, wr_id);
-  }
-  else {
-    // this was a new connection unexpected message and we must store it until mercury posts the receive
-    // do not call completion because mercury has not yet given this message an ID
-  }
-  if (region) {
-   client->releaseRegion(region);
-  }
-  FUNC_END_DEBUG_MSG
-  return ret;
-}
-#endif // __BGQ__
 /*---------------------------------------------------------------------------*/
 na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
 {
@@ -2167,7 +1961,7 @@ na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
     if (pd->WorkRequestCompletionMap.find(wr_id)!=pd->WorkRequestCompletionMap.end()) {
       LOG_DEBUG_MSG("Found the work request ID in the WR completion map (on_completion_wr) "
           << std::setfill('0') << std::setw(12) << std::hex << wr_id << " Entries " << pd->WorkRequestCompletionMap.size());
-      op_id = std::get<0>(pd->WorkRequestCompletionMap[wr_id]);
+      op_id = pd->WorkRequestCompletionMap[wr_id];
       pd->WorkRequestCompletionMap.erase(wr_id);
       ret = na_verbs_complete(op_id);
     }
@@ -2186,5 +1980,4 @@ na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
   FUNC_END_DEBUG_MSG
   return ret;
 }
-/*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
