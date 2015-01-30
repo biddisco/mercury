@@ -50,10 +50,10 @@ using namespace std::placeholders;
 #endif
 
 #ifdef START_END_DEBUG
-//  #define FUNC_START_DEBUG_MSG LOG_DEBUG_MSG("**************** Enter " << __func__ << " ****************");
-//  #define FUNC_END_DEBUG_MSG   LOG_DEBUG_MSG("################ Exit  " << __func__ << " ################");
-  #define FUNC_START_DEBUG_MSG std::cout << "**************** Enter " << __func__ << " ****************" << std::endl;
-  #define FUNC_END_DEBUG_MSG   std::cout << "################ Exit  " << __func__ << " ################" << std::endl;
+  #define FUNC_START_DEBUG_MSG LOG_DEBUG_MSG("**************** Enter " << __func__ << " ****************");
+  #define FUNC_END_DEBUG_MSG   LOG_DEBUG_MSG("################ Exit  " << __func__ << " ################");
+//  #define FUNC_START_DEBUG_MSG std::cout << "**************** Enter " << __func__ << " ****************" << std::endl;
+//  #define FUNC_END_DEBUG_MSG   std::cout << "################ Exit  " << __func__ << " ################" << std::endl;
 #else
   #define FUNC_START_DEBUG_MSG
   #define FUNC_END_DEBUG_MSG
@@ -61,8 +61,8 @@ using namespace std::placeholders;
 
 static int counter = 0;
 #include "cscs_messages.h"
-static uint64_t          rdma_put_ID = 10000;
-static uint64_t          rdma_get_ID = 20000;
+static uint64_t          rdma_put_ID = 0x8000000000000000;
+static uint64_t          rdma_get_ID = 0xC000000000000000;
 
 #define OPCODE_RECV 1
 #define OPCODE_SEND 2
@@ -130,6 +130,13 @@ struct PrintMap : public std::unary_function<T, void>
       os << std::setfill('0') << std::setw(12) << std::hex << elem.first << ", " << elem.second << "\n";
     }
 };
+/*
+std::for_each(
+    pd->WorkRequestCompletionMap.begin(),
+    pd->WorkRequestCompletionMap.end(),
+    PrintMap<OperationMap::value_type>(std::cout)
+);
+*/
 /*---------------------------------------------------------------------------*/
 
 
@@ -142,7 +149,6 @@ unsigned int na_verbs_get_port(na_class_t *na_class)
   na_verbs_private_data *pd = NA_VERBS_PRIVATE_DATA(na_class);
 #ifndef __BGQ__
   int na_test_verbs_port_g = pd->controller->getPort();
-  std::cout << na_test_verbs_port_g << std::endl;
 #else
   // this is never called on the client
   int na_test_verbs_port_g = -1;
@@ -405,7 +411,7 @@ static na_bool_t
 na_verbs_check_protocol(const char *protocol)
 {
   FUNC_START_DEBUG_MSG
-  std::cout << "Got a protocol string " << protocol << std::endl;
+  LOG_DEBUG_MSG("Got a protocol string " << protocol);
   na_bool_t accept = NA_FALSE;
   if (strstr(protocol, "rdma@") != 0) {
     accept = NA_TRUE;
@@ -471,7 +477,7 @@ na_verbs_initialize(na_class_t * na_class, const struct na_info *na_info,
     pd->controller->setCompletionFunction(completion_function);
 
     // call function to start listening in server mode
-    std::cout << "Controller listening for connections " << std::endl;
+    LOG_DEBUG_MSG("Controller listening for connections ");
     pd->controller->startup();
 #endif
   }
@@ -565,7 +571,6 @@ void NA_VERBS_Get_rdma_device_address(const char *devicename, const char *iface,
     linkDevice = RdmaDevicePtr(new RdmaDevice(devicename, iface));
   }
   catch (bgcios::RdmaError& e) {
-    std::cout << "Problem initializing device " << std::endl;
     LOG_ERROR_MSG("error opening InfiniBand device: " << e.what());
   }
   LOG_DEBUG_MSG("Created InfiniBand device for " << linkDevice->getDeviceName() << " using interface " << linkDevice->getInterfaceName());
@@ -784,7 +789,6 @@ na_verbs_addr_is_self(na_class_t NA_UNUSED *na_class, na_addr_t addr)
     struct na_verbs_addr *na_verbs_addr = (struct na_verbs_addr *) addr;
     FUNC_START_DEBUG_MSG
     FUNC_END_DEBUG_MSG
-    std::cout << "na verbs addr is " << na_verbs_addr << std::endl;
     return na_verbs_addr->self;
 }
 
@@ -934,11 +938,6 @@ static na_return_t na_verbs_msg_send(
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for send added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
-    std::for_each(
-        pd->WorkRequestCompletionMap.begin(),
-        pd->WorkRequestCompletionMap.end(),
-        PrintMap<OperationMap::value_type>(std::cout)
-    );
   }
   // Assign op_id
   *out_opid = (na_op_id_t) na_verbs_op_id;
@@ -1048,7 +1047,6 @@ static na_return_t na_verbs_msg_recv(
       client = pd->controller->getClient(na_verbs_addr->qp_id);
     }
     else if (na_verbs_addr==NULL && expected_flag==CSCS_user_message::UnexpectedMessage) {
-      printf("Received a null address in receive (unexpected)\n");
       client = NULL;
     }
     else {
@@ -1065,14 +1063,14 @@ static na_return_t na_verbs_msg_recv(
   {
     if (expected_flag==CSCS_user_message::UnexpectedMessage) {
 #ifndef __BGQ__
-      std::cout << "pushing an unexpected op \n" << pd->controller->num_clients() << std::endl;
+      LOG_DEBUG_MSG("pushing an unexpected op" << pd->controller->num_clients());
       pd->UnexpectedOps.push(na_verbs_op_id);
 #else
       throw std::string("BGQ Client should not be receiving unexpected messages");
 #endif
     }
     else {
-      std::cout << "pushing an expected op \n" << std::endl;
+      LOG_DEBUG_MSG("pushing an expected op");
       client->ExpectedOps.push(na_verbs_op_id);
     }
   }
@@ -1113,8 +1111,8 @@ na_verbs_msg_recv_expected(na_class_t NA_UNUSED *na_class, na_context_t *context
   na_return_t ret;
   FUNC_START_DEBUG_MSG
   if (source==NULL) {
-std::cout << "Throwing string due to NULL client " << std::endl;
-throw std::string("No address in expected receive");
+    LOG_ERROR_MSG("No address in expected receive");
+    throw std::string("No address in expected receive");
   }
   ret = na_verbs_msg_recv(
     na_class, context, callback, arg, buf, buf_size, source, tag, op_id,
@@ -1214,8 +1212,8 @@ na_verbs_mem_deregister(na_class_t *na_class, na_mem_handle_t mem_handle)
   handle->memkey = 0;
   // this should destroy the shared pointer, and the region at the same time
   if (handle->memregion) {
-    RdmaMemoryRegion *ptr = (RdmaMemoryRegion*)(handle->memregion);
-    delete ptr;
+    RdmaMemoryRegion *region = (RdmaMemoryRegion*)(handle->memregion);
+    delete region;
     handle->memregion = NULL;
     counter--;
     LOG_DEBUG_MSG("Register counter is " << counter);
@@ -1340,17 +1338,10 @@ na_verbs_put(
     //
     // add wr_id to our map for checking on completions later
     //
-    std::cout << "Adding put wr_id to completion map " << na_verbs_op_id->wr_id << "\n";
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for put added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
-    std::for_each(
-        pd->WorkRequestCompletionMap.begin(),
-        pd->WorkRequestCompletionMap.end(),
-        PrintMap<OperationMap::value_type>(std::cout)
-    );
   }
-  std::cout << "UN-3-Locking Mutex " << std::endl;
 
   // Assign op_id
   *out_opid = (na_op_id_t) na_verbs_op_id;
@@ -1435,11 +1426,6 @@ na_verbs_get(
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for get added to WR completion map "
         << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
-    std::for_each(
-        pd->WorkRequestCompletionMap.begin(),
-        pd->WorkRequestCompletionMap.end(),
-        PrintMap<OperationMap::value_type>(std::cout)
-    );
   }
 
   // Assign op_id
@@ -1540,26 +1526,14 @@ na_verbs_complete(struct na_verbs_op_id *na_verbs_op_id)
     }
     break;
     case NA_CB_RECV_EXPECTED:
-      // Check buf_size and actual_size
-/*
-      if (na_verbs_op_id->info.recv_expected.actual_size !=
-          na_verbs_op_id->info.recv_expected.buf_size) {
-        printf("size expected %d and received %d",
-            na_verbs_op_id->info.recv_expected.buf_size,
-            na_verbs_op_id->info.recv_expected.actual_size);
-        NA_LOG_ERROR("Buffer size and actual transfer size do not match");
-        ret = NA_SIZE_ERROR;
-        goto done;
-      }
-*/
       break;
     case NA_CB_PUT:
-      /* Transfer is now done so free RMA info */
+      // Transfer is now done so free RMA info
 //      free(na_verbs_op_id->info.put.rma_info);
       na_verbs_op_id->info.put.rma_info = NULL;
       break;
     case NA_CB_GET:
-      /* Transfer is now done so free RMA info */
+      // Transfer is now done so free RMA info
 //      free(na_verbs_op_id->info.get.rma_info);
       na_verbs_op_id->info.get.rma_info = NULL;
       break;
@@ -1782,6 +1756,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 {
   FUNC_START_DEBUG_MSG
   RdmaMemoryRegion *region = nullptr;
+  bool releaseRegion = true;
   // Check the status in the completion queue entry.
   if (completion->status != IBV_WC_SUCCESS)
   {
@@ -1842,6 +1817,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       switch (msg->header.expected)
       {
         case CSCS_user_message::TextMessage:
+          // print out the user's message (mostly for debugging)
           std::cout << msg->MessageData << std::endl;
           break;
         case CSCS_user_message::UnexpectedMessage:
@@ -1856,11 +1832,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             pd->UnexpectedOps.pop();
             // put this into the map where it will be fetched below
             pd->WorkRequestCompletionMap[wr_id_] = op_id;
-            std::for_each(
-                pd->WorkRequestCompletionMap.begin(),
-                pd->WorkRequestCompletionMap.end(),
-                PrintMap<OperationMap::value_type>(std::cout)
-            );
           }
           else {
             LOG_DEBUG_MSG("received ExpectedMessage, fetching receive");
@@ -1872,11 +1843,6 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             client->ExpectedOps.pop();
             // put this into the map where it will be fetched below
             pd->WorkRequestCompletionMap[wr_id_] = op_id;
-            std::for_each(
-                pd->WorkRequestCompletionMap.begin(),
-                pd->WorkRequestCompletionMap.end(),
-                PrintMap<OperationMap::value_type>(std::cout)
-            );
           }
           //
           // At this point we should have a valid op_id pointer
@@ -1908,7 +1874,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           break;
 
         default:
-          printf("unsupported message type %d received from client \n", msg->header.expected);
+          LOG_ERROR_MSG("unsupported message type " << msg->header.expected << " received from client");
           break;
       }
       break;
@@ -1919,7 +1885,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       LOG_CIOS_DEBUG_MSG("rdma read operation completed successfully for queue pair " << completion->qp_num);
       region = (RdmaMemoryRegion *)completion->wr_id;
       // NO! RDMA read and write operations use memory registered from user space, so don't free them back to the pool
-      region = NULL;
+      releaseRegion = false;
       break;
     }
 
@@ -1928,7 +1894,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       LOG_CIOS_DEBUG_MSG("rdma write operation completed successfully for queue pair " << completion->qp_num);
       region = (RdmaMemoryRegion *)completion->wr_id;
       // NO! RDMA read and write operations use memory registered from user space, so don't free them back to the pool
-      region = NULL;
+      releaseRegion = false;
       break;
     }
 #endif
@@ -1940,8 +1906,11 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
   }
   na_return_t ret = NA_PROTOCOL_ERROR;
   ret = on_completion_wr(pd, (uint64_t)(region));
-  if (region) {
-   client->releaseRegion(region);
+  if (((uint64_t)(region) & rdma_put_ID) == 0) {
+    LOG_DEBUG_MSG("Region pointer is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
+    if (releaseRegion) {
+     client->releaseRegion(region);
+    }
   }
   // make sure messages are always preposted so we don't run out
 
@@ -1972,11 +1941,6 @@ na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
       ret = NA_PROTOCOL_ERROR;
     }
   }
-  std::for_each(
-      pd->WorkRequestCompletionMap.begin(),
-      pd->WorkRequestCompletionMap.end(),
-      PrintMap<OperationMap::value_type>(std::cout)
-  );
   FUNC_END_DEBUG_MSG
   return ret;
 }

@@ -35,10 +35,6 @@
 
 #include "cscs_messages.h"
 
-#ifndef __BGQ__
- #include <ib_user_verbs.h>
-#endif
-
 #if (__GNUC__)
 #define __likely(x)   __builtin_expect(!!(x), 1)
 #define __unlikely(x) __builtin_expect(!!(x), 0)
@@ -64,7 +60,13 @@
 // simple function which the server uses to
 // write out the correct RDMA capable IP address
 // it may not be the same as the standard IP address
+#ifdef __cplusplus
+extern "C" {
+#endif
 void NA_VERBS_Get_rdma_device_address(const char *devicename, const char *iface, char *hostname);
+#ifdef __cplusplus
+}
+#endif
 
 struct na_verbs_addr;
 
