@@ -397,7 +397,7 @@ na_verbs_release(struct na_cb_info *callback_info, void *arg)
   if (na_verbs_op_id && !na_verbs_op_id->completed) {
     NA_LOG_ERROR("Releasing resources from an uncompleted operation");
   }
-  LOG_DEBUG_MSG("Freeing callback_info " << callback_info);
+  LOG_DEBUG_MSG("Freeing callback_info " << hexpointer(callback_info));
   free(callback_info);
   LOG_DEBUG_MSG("Freeing na_verbs_op_id");
   free(na_verbs_op_id);
@@ -888,12 +888,6 @@ static na_return_t na_verbs_msg_send(
   na_verbs_op_id->info.send.wr_id            = 0;
   na_verbs_op_id->info.send.rdmaMemRegionPtr = 0;
 
-  // In future versions we will ....
-  // expected or unexpected, wrap unexpected messages in a standard bgcios type message header,
-  // expected ones have matching receives, so we can do RDMA from buf to buf
-  if (expected_flag==CSCS_user_message::UnexpectedMessage) {
-    // TBD
-  }
   // not using these, but will when we switch to a direct buffer->buffer transfer
   if (pd->server) {
 #ifndef __BGQ__
@@ -913,12 +907,10 @@ static na_return_t na_verbs_msg_send(
   // use a standard bgcios message structure, copying our buffer into it
   //
   msg = (CSCS_user_message::UserRDMA_message *)region->getAddress();
-  // initHeader(&msg->header);
-//  msg->header.length     = bgcios::ImmediateMessageSize;  // Amount of data in message (including this header).
-//  msg->header.rank       = 0;                             // Rank message is associated with.
-  msg->header.expected  = expected_flag;                 // Content of message.
+  msg->header.expected  = expected_flag;
   msg->header.tag       = tag;
 
+  LOG_DEBUG_MSG("Sending using buffer size " << buf_size << " PD is " << hexpointer(pd));
   region->setMessageLength(buf_size + CSCS_UserMessageHeaderSize);
   memcpy(msg->MessageData, buf, buf_size);
 
@@ -928,9 +920,10 @@ static na_return_t na_verbs_msg_send(
   // after we have added the wr_id to the map
   {
     std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
+    LOG_DEBUG_MSG("SEND has buffer size " << buf_size << " TAG value " << tag);
     na_verbs_op_id->wr_id = client->postSend(region, true, false, 0);
     na_verbs_op_id->info.send.wr_id = na_verbs_op_id->wr_id;
-    LOG_DEBUG_MSG("SEND has TAG value " << tag);
+    LOG_DEBUG_MSG("SEND gave us back wr_id " << na_verbs_op_id->wr_id );
 
     //
     // add wr_id to our map for checking on completions later
@@ -1702,6 +1695,7 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
     ret = NA_SUCCESS;
   }
   else if (num_entries>0) {
+    LOG_DEBUG_MSG("CNK: num_entries " << num_entries);
     //
     // retrieve all completions one by one and trigger their completion handlers
     //
