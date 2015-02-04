@@ -32,9 +32,6 @@ extern "C" {
 #include <ramdisk/include/services/MessageUtility.h>
 
 #include <boost/regex.hpp>
-#include <boost/lexical_cast.hpp>
-#include <boost/throw_exception.hpp>
-#include <boost/tokenizer.hpp>
 
 #include <thread>
 #include <mutex>
@@ -69,6 +66,7 @@ static uint64_t          rdma_get_ID = 0xC000000000000000;
 #define OPCODE_PUT  3
 #define OPCODE_GET  4
 
+#define THROW_ERROR(x) { LOG_ERROR_MSG(x); throw std::runtime_error(x); }
 /*
  * This holds the destination address for any given operation.
  * All send/receive operations take an abstract na_addr_t
@@ -127,7 +125,7 @@ struct PrintMap : public std::unary_function<T, void>
 
     void operator()(const T& elem) const
     {
-      os << std::setfill('0') << std::setw(12) << std::hex << elem.first << ", " << elem.second << "\n";
+      os << hexpointer(elem.first) << ", " << elem.second << "\n";
     }
 };
 /*
@@ -899,7 +897,9 @@ static na_return_t na_verbs_msg_send(
   // not using these, but will when we switch to a direct buffer->buffer transfer
   if (pd->server) {
 #ifndef __BGQ__
-    if (!na_verbs_addr) throw std::runtime_error("Destination of send was not valid");
+    if (!na_verbs_addr) {
+      THROW_ERROR("Destination of send was not valid");
+    }
     client = pd->controller->getClient(na_verbs_addr->qp_id);
     region = client->getFreeRegion(512);
 #endif
@@ -937,7 +937,7 @@ static na_return_t na_verbs_msg_send(
     //
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for send added to WR completion map "
-        << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
+        << hexpointer(na_verbs_op_id->wr_id) << " Entries " <<  pd->WorkRequestCompletionMap.size());
   }
   // Assign op_id
   *out_opid = (na_op_id_t) na_verbs_op_id;
@@ -1050,7 +1050,7 @@ static na_return_t na_verbs_msg_recv(
       client = NULL;
     }
     else {
-      throw (std::string("Unexpected condition in receive"));
+      THROW_ERROR("Unexpected condition in receive");
     }
 #endif
   }
@@ -1066,7 +1066,7 @@ static na_return_t na_verbs_msg_recv(
       LOG_DEBUG_MSG("pushing an unexpected op" << pd->controller->num_clients());
       pd->UnexpectedOps.push(na_verbs_op_id);
 #else
-      throw std::string("BGQ Client should not be receiving unexpected messages");
+      THROW_ERROR("BGQ Client should not be receiving unexpected messages");
 #endif
     }
     else {
@@ -1111,8 +1111,7 @@ na_verbs_msg_recv_expected(na_class_t NA_UNUSED *na_class, na_context_t *context
   na_return_t ret;
   FUNC_START_DEBUG_MSG
   if (source==NULL) {
-    LOG_ERROR_MSG("No address in expected receive");
-    throw std::string("No address in expected receive");
+    THROW_ERROR("No address in expected receive");
   }
   ret = na_verbs_msg_recv(
     na_class, context, callback, arg, buf, buf_size, source, tag, op_id,
@@ -1136,8 +1135,8 @@ na_verbs_mem_handle_create(na_class_t NA_UNUSED *na_class, void *buf,
   handle->memregion = NULL;
   //
   *mem_handle = (na_mem_handle_t*)handle;
-  LOG_DEBUG_MSG("Created Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
-  ret = na_verbs_mem_register(na_class, *mem_handle);
+  LOG_DEBUG_MSG("Created Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
+//  ret = na_verbs_mem_register(na_class, *mem_handle);
 
   FUNC_END_DEBUG_MSG
   return ret;
@@ -1150,10 +1149,10 @@ na_verbs_mem_handle_free(na_class_t NA_UNUSED *na_class, na_mem_handle_t mem_han
   FUNC_START_DEBUG_MSG
   na_verbs_memhandle *handle = NA_VERBS_MEM_PTR(mem_handle);
   na_return_t            ret = NA_SUCCESS;
-
+  LOG_DEBUG_MSG("Memhandle free with  address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
   // take care of any stray registrations
   if (handle->memregion) {
-    LOG_DEBUG_MSG("Freed Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+    LOG_DEBUG_MSG("Freed Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
     RdmaMemoryRegion *ptr = (RdmaMemoryRegion *)(handle->memregion);
     delete ptr;
     handle->memregion = NULL;
@@ -1188,7 +1187,7 @@ static na_return_t na_verbs_mem_register(na_class_t *na_class,
     handle->memregion = region;
     handle->memkey = region->getLocalKey();
     LOG_DEBUG_MSG(
-        "Registered Mem Handle : address " << handle->address << " length " << handle->bytes
+        "Registered Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes)
         << " key " << handle->memkey);
     counter++;
     LOG_DEBUG_MSG("Register counter is " << counter);
@@ -1207,14 +1206,17 @@ na_verbs_mem_deregister(na_class_t *na_class, na_mem_handle_t mem_handle)
   na_verbs_private_data   *pd = NA_VERBS_PRIVATE_DATA(na_class);
 
   LOG_DEBUG_MSG(
-      "Unregistered Mem Handle : address " << handle->address << " length " << handle->bytes
-      << " key " << handle->memkey);
-  handle->memkey = 0;
+      "Unregistering Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes)
+      << " key " << handle->memkey << " region is " << handle->memregion);
   // this should destroy the shared pointer, and the region at the same time
   if (handle->memregion) {
+    LOG_DEBUG_MSG(
+        "Unregistering Mem Handle deleting region : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes)
+        << " key " << handle->memkey);
     RdmaMemoryRegion *region = (RdmaMemoryRegion*)(handle->memregion);
     delete region;
     handle->memregion = NULL;
+    handle->memkey = 0;
     counter--;
     LOG_DEBUG_MSG("Register counter is " << counter);
   }
@@ -1230,7 +1232,7 @@ na_verbs_mem_handle_get_serialize_size(na_class_t NA_UNUSED *na_class,
 {
   na_verbs_memhandle  *handle = NA_VERBS_MEM_PTR(mem_handle);
   FUNC_START_DEBUG_MSG
-//  LOG_DEBUG_MSG("Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+//  LOG_DEBUG_MSG("Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
   FUNC_END_DEBUG_MSG
   return sizeof(struct na_verbs_memhandle);
 }
@@ -1244,7 +1246,7 @@ na_verbs_mem_handle_serialize(na_class_t NA_UNUSED *na_class, void *buf,
   na_verbs_memhandle *handle = NA_VERBS_MEM_PTR(mem_handle);
   na_return_t            ret = NA_SUCCESS;
   memcpy(buf, handle, sizeof(struct na_verbs_memhandle));
-  LOG_DEBUG_MSG("Serialize Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+  LOG_DEBUG_MSG("Serialize Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
   // make sure no object pointer is sent, by zeroing it out
   FUNC_END_DEBUG_MSG
   return ret;
@@ -1263,8 +1265,9 @@ na_verbs_mem_handle_deserialize(na_class_t NA_UNUSED *na_class,
   na_verbs_memhandle *handle = (na_verbs_memhandle*)(malloc(sizeof(struct na_verbs_memhandle)));
   memcpy(handle, buf, sizeof(struct na_verbs_memhandle));
   // make sure no object pointer is used, by zeroing it out
+
   handle->memregion = NULL;
-  LOG_DEBUG_MSG("Deserialize Mem Handle : address " << handle->address << " length " << handle->bytes << " key " << handle->memkey);
+  LOG_DEBUG_MSG("Deserialize Mem Handle : address " << hexpointer(handle->address) << " length " << hexlength(handle->bytes) << " key " << handle->memkey);
   //
   *mem_handle = (na_mem_handle_t*)handle;
 
@@ -1340,7 +1343,7 @@ na_verbs_put(
     //
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for put added to WR completion map "
-        << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
+        << hexpointer(na_verbs_op_id->wr_id) << " Entries " <<  pd->WorkRequestCompletionMap.size());
   }
 
   // Assign op_id
@@ -1351,7 +1354,7 @@ na_verbs_put(
     free(na_verbs_op_id);
   }
 #else
-  throw "BGQ does not support RDMA PUT from Compute node";
+  THROW_ERROR("BGQ does not support RDMA PUT from Compute node");
 #endif
   FUNC_END_DEBUG_MSG
   return ret;
@@ -1418,14 +1421,13 @@ na_verbs_get(
     na_verbs_op_id->wr_id                 = rdma_get_ID;
     //
     rdma_get_ID++;
-    //
 
     //
     // add wr_id to our map for checking on completions later
     //
     pd->WorkRequestCompletionMap[na_verbs_op_id->wr_id] = na_verbs_op_id;
     LOG_DEBUG_MSG("wr_id for get added to WR completion map "
-        << std::setfill('0') << std::setw(12) << std::hex << na_verbs_op_id->wr_id << " Entries " <<  pd->WorkRequestCompletionMap.size());
+        << hexpointer(na_verbs_op_id->wr_id) << " Entries " << pd->WorkRequestCompletionMap.size());
   }
 
   // Assign op_id
@@ -1436,7 +1438,7 @@ na_verbs_get(
     free(na_verbs_op_id);
   }
 #else
-  throw "BGQ does not support RDMA PUT from Compute node";
+  THROW_ERROR("BGQ does not support RDMA PUT from Compute node");
 #endif
   FUNC_END_DEBUG_MSG
   return ret;
@@ -1514,16 +1516,16 @@ na_verbs_complete(struct na_verbs_op_id *na_verbs_op_id)
       // data has gone, nothing to do
       break;
     case NA_CB_RECV_UNEXPECTED:
-    {
-      LOG_DEBUG_MSG("inside NA_CB_RECV_UNEXPECTED, copying na_addr into callback");
+      {
+        LOG_DEBUG_MSG("inside NA_CB_RECV_UNEXPECTED, copying na_addr into callback");
 
-      struct na_verbs_info_recv *unexpected_info = (struct na_verbs_info_recv *)&na_verbs_op_id->info.recv;
+        struct na_verbs_info_recv *unexpected_info = (struct na_verbs_info_recv *)&na_verbs_op_id->info.recv;
 
-      callback_info->info.recv_unexpected.actual_buf_size = unexpected_info->buf_size;
-      callback_info->info.recv_unexpected.source          = na_verbs_op_id->verbs_addr;
-      callback_info->info.recv_unexpected.tag             = unexpected_info->tag;
-      LOG_DEBUG_MSG("CALLBACK TAG value " << unexpected_info->tag);
-    }
+        callback_info->info.recv_unexpected.actual_buf_size = unexpected_info->buf_size;
+        callback_info->info.recv_unexpected.source          = na_verbs_op_id->verbs_addr;
+        callback_info->info.recv_unexpected.tag             = unexpected_info->tag;
+        LOG_DEBUG_MSG("CALLBACK TAG value " << unexpected_info->tag);
+      }
     break;
     case NA_CB_RECV_EXPECTED:
       break;
@@ -1544,7 +1546,7 @@ na_verbs_complete(struct na_verbs_op_id *na_verbs_op_id)
       break;
   }
 
-  LOG_DEBUG_MSG("calling completion add ");
+  LOG_DEBUG_MSG("calling completion add for wr_id " << hexpointer(na_verbs_op_id->wr_id));
   ret = na_cb_completion_add(na_verbs_op_id->context, na_verbs_op_id->callback,
       callback_info, &na_verbs_release, na_verbs_op_id);
   if (ret != NA_SUCCESS) {
@@ -1705,13 +1707,13 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
     //
     int entry = 0;
     while (entry<num_entries) {
-      LOG_DEBUG_MSG("Triggering handler for work request " << entry << " of " << num_entries << " "
-          << "\nbuffer\t " << WorkCompletionList[entry].buf
-          << "\nlen   \t " << WorkCompletionList[entry].len
-          << "\nopcode   \t " << WorkCompletionList[entry].opcode
-          << "\nstatus   \t " << WorkCompletionList[entry].status
-          << "\nflags   \t " << WorkCompletionList[entry].flags
-          << "\nreserved   \t " << WorkCompletionList[entry].reserved
+      LOG_DEBUG_MSG("CNK: Triggering handler for work request " << entry << " of " << num_entries << " "
+          << " buffer "   << hexpointer(WorkCompletionList[entry].buf)
+          << " len "      << hexlength(WorkCompletionList[entry].len)
+          << " opcode "   << WorkCompletionList[entry].opcode
+          << " status "   << WorkCompletionList[entry].status
+          << " flags  "   << WorkCompletionList[entry].flags
+          << " reserved " << WorkCompletionList[entry].reserved
       );
       if (WorkCompletionList[entry].buf!=NULL) {
         int result = handle_verbs_completion(&WorkCompletionList[entry], pd, pd->client);
@@ -1724,22 +1726,6 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
   return ret;
 }
 
-/*---------------------------------------------------------------------------*/
-/*
-na_return_t empty_cq(na_verbs_private_data *pd)
-{
-  FUNC_START_DEBUG_MSG
-  int num = 0;
-  while (num==0) {
-    num = poll_cq_non_blocking(pd);
-    // std::this_thread::
-    usleep(1000);
-  }
-  FUNC_END_DEBUG_MSG
-  if (num<0) return NA_PROTOCOL_ERROR;
-  return NA_SUCCESS;
-}
-*/
 /*---------------------------------------------------------------------------*/
 #endif
 /*---------------------------------------------------------------------------*/
@@ -1764,7 +1750,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     LOG_ERROR_MSG("failed work completion, status '" << ibv_wc_status_str(completion->status) << "' for operation "
         << RdmaCompletionQueue::wc_opcode_str(completion->opcode) << " " << completion->opcode );
 #else
-    LOG_ERROR_MSG("failed work completion, " << completion->opcode );
+    LOG_ERROR_MSG("CNK: failed work completion, " << completion->opcode );
 #endif
     return NA_PROTOCOL_ERROR;
   }
@@ -1781,13 +1767,12 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 #else
       // we do not know which region (wr_id) to use, so we must scan them manually because
       // the CNK kernel_ rdma routines use the internal buffer as reference
-      LOG_DEBUG_MSG("Begin Scan section ");
       for (auto wc : pd->WorkRequestCompletionMap) {
         RdmaMemoryRegion *_region = (RdmaMemoryRegion *)(wc.first);
-        LOG_DEBUG_MSG("Scanning a region " << std::setfill('0') << std::setw(12) << std::hex << _region);
+        LOG_DEBUG_MSG("CNK: Scanning a region " << hexpointer(_region) << hexpointer(_region->getAddress()));
         if ((void*)(completion->buf) == _region->getAddress()) {
           region = _region;
-          LOG_DEBUG_MSG("completion->buf matches " << std::setfill('0') << std::setw(12) << std::hex << _region->getAddress());
+          LOG_DEBUG_MSG("CNK: completion->buf matches " << hexpointer(_region->getAddress()));
           break;
         }
       }
@@ -1806,11 +1791,11 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
       if (completion->wr_id != wr_id_) {
         LOG_ERROR_MSG("Actual completion id is " << completion->wr_id << " but expected " << wr_id_);
 #endif
-        throw std::string("Work request Id mismatch");
+        THROW_ERROR("Work request Id mismatch");
       }
 
       // Handle the message.
-      LOG_DEBUG_MSG("Region pointer is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
+      LOG_DEBUG_MSG("Region pointer is " << hexpointer(region) << " " );
       CSCS_user_message::UserRDMA_message *msg = (CSCS_user_message::UserRDMA_message *)(region->getAddress());
       na_verbs_op_id                    *op_id = NULL;
       struct na_verbs_addr      *na_verbs_addr = NULL;
@@ -1825,7 +1810,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           if (msg->header.expected==CSCS_user_message::UnexpectedMessage) {
             LOG_DEBUG_MSG("received UnexpectedMessage, fetching unexpected receive");
             if (pd->UnexpectedOps.size()==0) {
-              throw (std::string("Message received before receive was posted"));
+              THROW_ERROR("Message received before receive was posted");
             }
             // for an unexpected message we must get the na_op_id to use for completion
             op_id = pd->UnexpectedOps.front();
@@ -1836,7 +1821,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           else {
             LOG_DEBUG_MSG("received ExpectedMessage, fetching receive");
             if (client->ExpectedOps.size()==0) {
-              throw (std::string("Message received before receive was posted"));
+              THROW_ERROR("Message received before receive was posted");
             }
             //
             op_id = client->ExpectedOps.front();
@@ -1848,7 +1833,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           // At this point we should have a valid op_id pointer
           //
           if (op_id->info.recv.buf_size<CSCS_UserMessageDataSize) {
-            throw std::runtime_error("Receive buffer was too small for unexpected message");
+            THROW_ERROR("Receive buffer was too small for unexpected message");
           }
           //
           // Copy the contents of the message into the buffer given during the receive call
@@ -1863,6 +1848,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             // we will use with future traffic to this destination
             na_verbs_addr = new struct na_verbs_addr();
             if (!na_verbs_addr) {
+              LOG_ERROR_MSG("Bad alloc in na_verbs_completion");
               throw std::bad_alloc();
             }
 #ifndef __BGQ__
@@ -1907,7 +1893,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
   na_return_t ret = NA_PROTOCOL_ERROR;
   ret = on_completion_wr(pd, (uint64_t)(region));
   if (((uint64_t)(region) & rdma_put_ID) == 0) {
-    LOG_DEBUG_MSG("Region pointer is " << std::setfill('0') << std::setw(12) << std::hex << (uintptr_t)region << " " );
+    LOG_DEBUG_MSG("Region pointer is " << hexpointer(region) << " " );
     if (releaseRegion) {
      client->releaseRegion(region);
     }
@@ -1929,7 +1915,7 @@ na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
   {
     if (pd->WorkRequestCompletionMap.find(wr_id)!=pd->WorkRequestCompletionMap.end()) {
       LOG_DEBUG_MSG("Found the work request ID in the WR completion map (on_completion_wr) "
-          << std::setfill('0') << std::setw(12) << std::hex << wr_id << " Entries " << pd->WorkRequestCompletionMap.size());
+          << hexpointer(wr_id) << " Entries " << pd->WorkRequestCompletionMap.size());
       op_id = pd->WorkRequestCompletionMap[wr_id];
       pd->WorkRequestCompletionMap.erase(wr_id);
       ret = na_verbs_complete(op_id);

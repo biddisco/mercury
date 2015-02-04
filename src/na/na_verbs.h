@@ -82,20 +82,6 @@ struct na_verbs_memhandle {
 #define NA_VERBS_MEM_PTR(var) \
     ((na_verbs_memhandle *)(var))
 
-struct verbs_mr {
-  int memId;
-};
-
-struct verbs_get {
-  struct verbs_mr memregion;
-};
-
-struct verbs_msg_recv_expected {
-  struct verbs_mr memregion;
-  void           *input_buffer;
-  na_size_t       input_buffer_size;
-};
-
 typedef enum na_verbs_rma_op {
   NA_VERBS_RMA_PUT, /* Request a put operation */
   NA_VERBS_RMA_GET /* Request a get operation */
