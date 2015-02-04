@@ -77,13 +77,19 @@ endif()
 
 option(NA_USE_VERBS "Use VERBS." OFF)
 if(NA_USE_VERBS)
-  find_package(IB_VERBS)
-  find_package(RDMA_CM)
-find_package(Boost 1.50.0  REQUIRED
-   regex date_time serialization
-  program_options filesystem log log_setup system thread
-)
-  find_package(rdmahelper)
+  if (NOT BGQ)
+    find_package(IB_VERBS)
+    find_package(RDMA_CM)
+  else()
+    set(IB_VERBS_FOUND 1)
+    set(RDMA_CM_FOUND 1)
+  endif()
+  find_package(Boost 1.50.0  REQUIRED
+     regex date_time serialization
+    program_options filesystem log log_setup system thread
+  )
+  find_package(rdmahelper REQUIRED)
+  include_directories(${rdmahelper_INCLUDE_DIR})
 
   if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
     set(NA_PLUGINS ${NA_PLUGINS} verbs)
