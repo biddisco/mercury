@@ -28,8 +28,10 @@ main(int argc, char *argv[])
     hg_context_t *context = NULL;
     unsigned int number_of_peers;
     hg_return_t ret = HG_SUCCESS;
-    int num_clients = MPI_NUM_CLIENTS;
-
+    int num_clients = 1;
+#ifdef MPI_NUM_CLIENTS
+    num_clients = MPI_NUM_CLIENTS;
+#endif
     hg_class = HG_Test_server_init(argc, argv, NULL, NULL,
             &number_of_peers, &context);
 
