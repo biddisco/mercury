@@ -678,7 +678,7 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
   pd->client->refill_preposts(2);
 #else
   LOG_DEBUG_MSG("(client) creating memory_pool");
-  memory_poolPtr _memoryPool = std::make_shared<memory_pool>(pd->client->getFD(), 512, 2, 32);
+  memory_poolPtr _memoryPool = std::make_shared<memory_pool>(pd->client->getFD(), 512, 2, USER_MAX_RDMA_REGIONS);
   pd->client->setMemoryPool(_memoryPool);
   // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
