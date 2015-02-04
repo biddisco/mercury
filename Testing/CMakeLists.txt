@@ -119,6 +119,7 @@ if(MERCURY_ENABLE_PARALLEL_TESTING)
     set(MERCURY_TEST_EXT_LIB_DEPENDENCIES
       ${MERCURY_TEST_EXT_LIB_DEPENDENCIES}
       ${MPI_LIBRARIES}
+      ${MPI_EXTRA_LIBRARIES}
     )
   else()
     message(FATAL_ERROR "Could not find MPI.")
@@ -189,6 +190,6 @@ endforeach()
 add_mercury_test(bulk_seg "extra" "--extra")
 add_mercury_test(bulk_seg "variable" "--variable")
 
-#add_executable(hg_test_BW test_BW.cpp)
-#target_link_libraries(hg_test_BW mercury_test)
-#add_mercury_test_comm(BW verbs "" "${opt}" "device;${VERBS_DEVICE_NAME};iface;${VERBS_INTERFACE_NAME}")
+#add_executable(hg_test_pipeline test_pipeline.c)
+#target_link_libraries(hg_test_pipeline mercury_test)
+#add_mercury_test(pipeline verbs "" "")
