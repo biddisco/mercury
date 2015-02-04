@@ -871,7 +871,7 @@ static na_return_t na_verbs_msg_send(
   // until the send completes, so we must store the object outside of this function
   CSCS_user_message::UserRDMA_message *msg;
   RdmaClientPtr                        client;
-  RdmaMemoryRegionPtr                  region;
+  RdmaMemoryRegion                    *region;
 
   // Allocate op_id
   na_verbs_op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
@@ -886,7 +886,6 @@ static na_return_t na_verbs_msg_send(
   na_verbs_op_id->arg                        = arg;
   na_verbs_op_id->completed                  = NA_FALSE;
   na_verbs_op_id->info.send.wr_id            = 0;
-  na_verbs_op_id->info.send.rdmaMemRegionPtr = 0;
 
   // not using these, but will when we switch to a direct buffer->buffer transfer
   if (pd->server) {

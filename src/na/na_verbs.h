@@ -98,14 +98,12 @@ struct na_verbs_rma_info {
 
 struct na_verbs_info_send {
   uint64_t         wr_id;            // verbs operation ID
-  void            *rdmaMemRegionPtr; // memory region sent
 };
 
 struct na_verbs_info_recv {
     void                 *buf;
     na_size_t             buf_size;
     na_tag_t              tag;
-    void                 *rdmaMemRegionPtr; // memory region sent
 };
 
 
