@@ -12,7 +12,7 @@ set(MERCURY_USE_BOOST_PP @MERCURY_USE_BOOST_PP@)
 # Directories
 #-----------------------------------------------------------------------------
 set(MERCURY_INCLUDE_DIR "@MERCURY_INCLUDES_BUILD_TIME@")
-
+set(MERCURY_INCLUDE_DIR_CXX "@MERCURY_INCLUDES_BUILD_TIME_CXX@")
 #-----------------------------------------------------------------------------
 # Version Strings
 #-----------------------------------------------------------------------------
