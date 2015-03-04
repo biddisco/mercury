@@ -83,7 +83,6 @@ struct na_verbs_addr {
     RdmaClientPtr client;
     // self flag, true if this address is local, false if remote
     na_bool_t     self;
-
 };
 
 typedef std::map<uint64_t, na_verbs_op_id*> OperationMap;
@@ -108,6 +107,8 @@ struct na_verbs_private_data
 
     // store na_verbs_op_id for unexpected receives
     std::queue<na_verbs_op_id*>   UnexpectedOps;
+    // if an unexpected message arrives but we didn't yet prepost, cache it here
+    std::queue<na_verbs_op_id*>   EarlyUnexpectedOps;
     //
     char *listen_addr; /* Server listen_addr */
 
@@ -672,6 +673,10 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
   memory_poolPtr _memoryPool = std::make_shared<memory_pool>(pd->domain, 512, 2, 32);
 
   // make a connection
+  LOG_DEBUG_MSG("(client) sleeping before connecting to ensure server is ready (for ctest success) ");
+  sleep(1);
+
+  // make a connection
   LOG_DEBUG_MSG("(client) calling makepeer ");
   pd->client->makePeer(pd->domain, pd->completionQ);
   pd->client->setMemoryPool(_memoryPool);
@@ -751,6 +756,19 @@ na_verbs_addr_free(na_class_t NA_UNUSED *na_class, na_addr_t addr)
   FUNC_END_DEBUG_MSG
   return ret;
   }
+
+/*---------------------------------------------------------------------------*/
+/*
+static na_return_t
+na_verbs_addr_dup(na_class_t NA_UNUSED *na_class, na_addr_t addr, na_addr_t *new_addr)
+{
+	na_verbs_addr_t *na_verbs_addr = (na_cci_addr_t *)addr;
+	addr_addref(na_cci_addr); // for na_cci_addr_free()
+	*new_addr = addr;
+
+	return NA_SUCCESS;
+}
+*/
 
 /*---------------------------------------------------------------------------*/
 static na_return_t na_verbs_addr_self(na_class_t NA_UNUSED *na_class,
@@ -1055,8 +1073,23 @@ static na_return_t na_verbs_msg_recv(
   {
     if (expected_flag==CSCS_user_message::UnexpectedMessage) {
 #ifndef __BGQ__
-      LOG_DEBUG_MSG("pushing an unexpected op" << pd->controller->num_clients());
-      pd->UnexpectedOps.push(na_verbs_op_id);
+
+      // if a message was received before mercury managed to pre-post
+       // get it from here and call completion immediately.
+       if (pd->EarlyUnexpectedOps.size()>0) {
+         struct na_verbs_op_id *early_op_id = pd->EarlyUnexpectedOps.front();
+         LOG_DEBUG_MSG("Early message retrieved with wr_id " << early_op_id->wr_id);
+         memcpy(na_verbs_op_id->info.recv.buf, early_op_id->info.recv.buf, na_verbs_op_id->info.recv.buf_size);
+         na_verbs_op_id->info.recv.tag = early_op_id->info.recv.tag;
+         pd->EarlyUnexpectedOps.pop();
+         FUNC_END_DEBUG_MSG
+         return na_verbs_complete(na_verbs_op_id);
+       }
+       else {
+         LOG_DEBUG_MSG("pushing an unexpected op" << pd->controller->num_clients());
+         pd->UnexpectedOps.push(na_verbs_op_id);
+       }
+
 #else
       THROW_ERROR("BGQ Client should not be receiving unexpected messages");
 #endif
@@ -1708,10 +1741,13 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
           << " flags  "   << WorkCompletionList[entry].flags
           << " reserved " << WorkCompletionList[entry].reserved
       );
+      LOG_DEBUG_MSG("Here 1");
       if (WorkCompletionList[entry].buf!=NULL) {
+        LOG_DEBUG_MSG("Here 2");
         int result = handle_verbs_completion(&WorkCompletionList[entry], pd, pd->client);
         if (result != NA_SUCCESS) { ret = NA_PROTOCOL_ERROR; }
       }
+      LOG_DEBUG_MSG("Here 3");
       entry++;
     }
   }
@@ -1747,6 +1783,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 #endif
     return NA_PROTOCOL_ERROR;
   }
+  LOG_DEBUG_MSG("Here 4");
 
   std::lock_guard<std::mutex> lock(verbs_completion_map_mutex);
   //
@@ -1760,7 +1797,9 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
 #else
       // we do not know which region (wr_id) to use, so we must scan them manually because
       // the CNK kernel_ rdma routines use the internal buffer as reference
+      LOG_DEBUG_MSG("Here 5");
       for (auto wc : pd->WorkRequestCompletionMap) {
+        LOG_DEBUG_MSG("Here 6");
         RdmaMemoryRegion *_region = (RdmaMemoryRegion *)(wc.first);
         LOG_DEBUG_MSG("CNK: Scanning a region " << hexpointer(_region) << hexpointer(_region->getAddress()));
         if ((void*)(completion->buf) == _region->getAddress()) {
@@ -1769,16 +1808,21 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           break;
         }
       }
+      LOG_DEBUG_MSG("Here 7");
 #endif
       break;
     }
 
     case IBV_WC_RECV:
     {
+      LOG_DEBUG_MSG("Here 8 with size " << client->getNumReceives());
       uint64_t wr_id_ = client->popReceive();
+      LOG_DEBUG_MSG("Here 8a");
       region = (RdmaMemoryRegion*)(wr_id_);
+      LOG_DEBUG_MSG("Here 8b");
 #ifdef __BGQ__
       if (completion->buf != region->getAddress()) {
+        LOG_DEBUG_MSG("Here 9");
         LOG_ERROR_MSG("Actual completion is " << completion->buf << " but expected " << region->getAddress());
 #else
       if (completion->wr_id != wr_id_) {
@@ -1803,18 +1847,50 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
           if (msg->header.expected==CSCS_user_message::UnexpectedMessage) {
             LOG_DEBUG_MSG("received UnexpectedMessage, fetching unexpected receive");
             if (pd->UnexpectedOps.size()==0) {
-              THROW_ERROR("Message received before receive was posted");
+#ifdef __BGQ__
+              LOG_WARN_MSG("Unexpected arrived before it has been posted - storing data until ready, wr_id = " << completion->buf);
+#else
+              LOG_WARN_MSG("Unexpected arrived before it has been posted - storing data until ready, wr_id = " << completion->wr_id);
+#endif
+              //
+              // The buffer and na_op_id have not been assigned because an unexpected
+              // receive has arrived before mercury server posted one.
+              //
+              // Allocate a temp na_op_id until the receive is posted when it must be copied
+              // into the real buffer that mercury sends in.
+              //
+              op_id = (struct na_verbs_op_id *) malloc(sizeof(struct na_verbs_op_id));
+              if (!op_id) {
+                NA_LOG_ERROR("Could not allocate NA VERBS operation ID");
+                throw std::bad_alloc();
+              }
+              op_id->context               = 0;
+              op_id->type                  = NA_CB_RECV_UNEXPECTED;
+              op_id->callback              = 0;
+              op_id->arg                   = 0;
+              op_id->completed             = NA_TRUE;
+              op_id->info.recv.buf_size    = CSCS_UserMessageDataSize;
+              op_id->info.recv.buf         = malloc(CSCS_UserMessageDataSize);
+              op_id->info.recv.tag         = 0;
+#ifndef __BGQ__
+              op_id->wr_id                 = completion->wr_id;
+#else
+              op_id->wr_id                 = (uint64_t)completion->buf;
+#endif
+              pd->EarlyUnexpectedOps.push(op_id);
             }
-            // for an unexpected message we must get the na_op_id to use for completion
-            op_id = pd->UnexpectedOps.front();
-            pd->UnexpectedOps.pop();
-            // put this into the map where it will be fetched below
-            pd->WorkRequestCompletionMap[wr_id_] = op_id;
+            else {
+              // for an unexpected message we must get the na_op_id to use for completion
+              op_id = pd->UnexpectedOps.front();
+              pd->UnexpectedOps.pop();
+              // put this into the map where it will be fetched below
+              pd->WorkRequestCompletionMap[wr_id_] = op_id;
+            }
           }
           else {
             LOG_DEBUG_MSG("received ExpectedMessage, fetching receive");
             if (client->ExpectedOps.size()==0) {
-              THROW_ERROR("Message received before receive was posted");
+              THROW_ERROR("Expected Message received before receive was posted");
             }
             //
             op_id = client->ExpectedOps.front();
@@ -1829,7 +1905,7 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
             THROW_ERROR("Receive buffer was too small for unexpected message");
           }
           //
-          // Copy the contents of the message into the buffer given during the receive call
+          // Copy the contents of the message into the buffer supplied
           //
           memcpy(op_id->info.recv.buf, msg->MessageData, CSCS_UserMessageDataSize);
           op_id->info.recv.tag = msg->header.tag;
@@ -1884,15 +1960,17 @@ int handle_verbs_completion(struct ibv_wc *completion, na_verbs_private_data *pd
     }
   }
   na_return_t ret = NA_PROTOCOL_ERROR;
-  ret = on_completion_wr(pd, (uint64_t)(region));
+  if (region) {
+    ret = on_completion_wr(pd, (uint64_t)(region));
+  }
   if (((uint64_t)(region) & rdma_put_ID) == 0) {
     LOG_DEBUG_MSG("Region pointer is " << hexpointer(region) << " " );
     if (releaseRegion) {
      client->releaseRegion(region);
     }
   }
-  // make sure messages are always preposted so we don't run out
 
+  // make sure messages are always preposted so we don't run out
   LOG_DEBUG_MSG("Refilling client prepost queue");
   client->refill_preposts(2);
   //
