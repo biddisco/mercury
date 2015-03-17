@@ -19,17 +19,15 @@ extern "C" {
 #include <poll.h>
 
 #ifndef __BGQ__
-  #include <ramdisk/include/services/ServicesConstants.h>
-  #include <ramdisk/include/services/common/RdmaDevice.h>
-  #include <ramdisk/include/services/common/RdmaCompletionQueue.h>
+  #include <RdmaDevice.h>
+  #include <RdmaCompletionQueue.h>
   #include "MercuryController.h"
 #else
-  #include "rdmahelper_logging.h"
-  #include <ramdisk/include/services/common/CNKClient.h>
-  #include <ramdisk/include/services/common/RdmaError.h>
+  #include <RdmaLogging.h>
+  #include <CNKClient.h>
+  #include <RdmaError.h>
 #endif
 
-#include <ramdisk/include/services/MessageUtility.h>
 
 #include <boost/regex.hpp>
 
@@ -39,7 +37,6 @@ extern "C" {
 //
 std::mutex verbs_completion_map_mutex;
 using namespace bgcios;
-using namespace bgcios::stdio;
 using namespace std::placeholders;
 
 #ifndef NDEBUG
@@ -662,7 +659,6 @@ na_verbs_addr_lookup(na_class_t NA_UNUSED *na_class, na_context_t *context,
     LOG_ERROR_MSG("error constructing completion channel: " << e.what());
     return NA_PROTOCOL_ERROR;
   }
-  LOG_DEBUG_MSG("(client) created completion channel using fd " << pd->completionChannel->getChannelFd());
 
   pd->completionQ = RdmaCompletionQueuePtr(
       new RdmaCompletionQueue(
@@ -1635,7 +1631,7 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd, RdmaCompletionChanne
       LOG_CIOS_TRACE_MSG("poll returned EINTR, continuing ..");
       return NA_SUCCESS;
     }
-    LOG_ERROR_MSG("error polling socket descriptors: " << bgcios::errorString(err));
+    LOG_ERROR_MSG("error polling socket descriptors: " << RdmaError::errorString(err));
     return NA_PROTOCOL_ERROR;
   }
 
@@ -1703,7 +1699,6 @@ na_return_t empty_cq(na_verbs_private_data *pd, RdmaCompletionChannelPtr channel
 #define IBV_WC_SEND    2
 #define IBV_WC_RECV    1
 #define ibv_wc_status_str(x) " "
-#define LOG_CIOS_TRACE_MSG(x) " "
 /*---------------------------------------------------------------------------*/
 na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
 {
@@ -1720,7 +1715,7 @@ na_return_t poll_cq_non_blocking(na_verbs_private_data *pd)
   int success = Kernel_RDMAPollCQ(RDMA_fd, &num_entries, WorkCompletionList);
 
   if (success!=0) {
-    LOG_ERROR_MSG("error polling : " << bgcios::errorString(success));
+    LOG_ERROR_MSG("error polling : " << RdmaError::errorString(success));
     ret = NA_PROTOCOL_ERROR;
   }
   else if (num_entries==0) {
@@ -1992,7 +1987,7 @@ na_return_t on_completion_wr(na_verbs_private_data *pd, uint64_t wr_id)
       ret = na_verbs_complete(op_id);
     }
     else {
-      LOG_ERROR_MSG("Could not locate work request in WR completion map " << wr_id);
+      LOG_ERROR_MSG("Could not locate work request in WR completion map " << hexpointer(wr_id));
       // due to race conditions, it is possible for the thread to complete before the work request has been
       // added to the completion map!
       ret = NA_PROTOCOL_ERROR;

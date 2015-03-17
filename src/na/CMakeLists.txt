@@ -89,7 +89,7 @@ if(NA_USE_VERBS)
     program_options filesystem log log_setup system thread
   )
   find_package(rdmahelper REQUIRED)
-  include_directories(${rdmahelper_INCLUDE_DIR})
+  include_directories(${rdmahelper_INCLUDE_DIRS})
 
   if(IB_VERBS_FOUND AND RDMA_CM_FOUND AND rdmahelper_FOUND)
     set(NA_PLUGINS ${NA_PLUGINS} verbs)

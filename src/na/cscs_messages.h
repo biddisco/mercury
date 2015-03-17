@@ -6,7 +6,7 @@
 //
 #ifdef __cplusplus
 
-//#include <ramdisk/include/services/UserMessages.h>
+//#include <UserMessages.h>
 
 namespace CSCS_user_message {
 
